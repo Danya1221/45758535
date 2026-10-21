@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, RPCError
 
-from .catalog import CatalogError, build_reply, find_products, parse_catalog
+from .catalog import CatalogError, build_reply, inspect_request, parse_catalog
 from .engine import Engine, Incoming, SendFailure
 from .storage import Store
 from .prices import FOOTER, PriceFeedError, parse_price_feed
@@ -244,10 +244,15 @@ class Application:
         if not products:
             await message.answer('Сначала загрузи список: /catalog')
             return
-        classification, found = await asyncio.to_thread(find_products, text, products, self.store.get('allow_bare', True))
+        report = await asyncio.to_thread(inspect_request, text, products, self.store.get('allow_bare', True))
+        classification, found = report.classification, report.products
         labels = {'buy': 'запрос на покупку', 'bare': 'название товара без «куплю»',
                   'sell': 'предложение продавца', 'uncertain': 'неопределённое сообщение'}
         text_out = f'Тип: {labels[classification]}\nСовпадений: {len(found)}\n'
+        details = '\n'.join(report.details)
+        if len(details) > 1600:
+            details = details[:1550] + '\n…Проверь остальные товарные строки отдельными запросами.'
+        text_out += details + '\n'
         if found:
             text_out += '\nТакой ответ будет отправлен при включённых ответах:\n\n' + build_reply(found, self.store.get('intro'), self.config.contact)
         else:

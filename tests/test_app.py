@@ -127,6 +127,21 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.products()[0].name, 'iPhone 17')
         self.assertIn('Прайс не изменён', self.texts()[-1])
 
+    async def test_test_command_explains_strict_matching_without_sending(self):
+        await self.feed('/catalog')
+        await self.feed('Note 15 8/256 Blue (NO NFC)|18000|1')
+        await self.feed('/test Куплю Note 15 NFC')
+        self.assertIn('Совпадений: 0', self.texts()[-1])
+        self.assertIn('Отсеяно: NFC — 1', self.texts()[-1])
+        self.assertIn('Ответа не будет', self.texts()[-1])
+        self.assertFalse(self.store.get('active', False))
+        await self.feed('/catalog')
+        await self.feed('iPhone 17 256 Black SIM|85000|1')
+        await self.feed('/test Куплю iPhone 17 256 Black SIM')
+        self.assertIn('модель: iPhone 17', self.texts()[-1])
+        self.assertIn('память: 256 ГБ', self.texts()[-1])
+        self.assertIn('85 000 ₽', self.texts()[-1])
+
 
 if __name__ == '__main__':
     unittest.main()
