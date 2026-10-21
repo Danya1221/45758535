@@ -6,7 +6,7 @@ import io
 import logging
 import os
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,6 +25,7 @@ from .engine import Engine, Incoming, SendFailure
 from .storage import Store
 from .prices import FOOTER, PriceFeedError, parse_price_feed
 from .price_sync import PriceSync, format_summary
+from .sessions import load_string_session
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class Config:
     price_request: str = ''
     price_button: str = ''
     price_interval: int = 600
+    telegram_session: str = field(default='', repr=False)
 
     @classmethod
     def from_env(cls, *, login_only: bool = False):
@@ -50,14 +52,15 @@ class Config:
         required = ['API_ID', 'API_HASH'] + ([] if login_only else ['BOT_TOKEN', 'OWNER_ID'])
         missing = [key for key in required if not os.environ.get(key)]
         if missing:
-            raise ValueError('Заполни .env: ' + ', '.join(missing))
+            raise ValueError('Заполни переменные окружения (локально — .env): ' + ', '.join(missing))
         try:
             result = cls(int(os.environ['API_ID']), os.environ['API_HASH'], os.getenv('BOT_TOKEN', ''),
-                         int(os.getenv('OWNER_ID') or 0), Path(os.getenv('DATA_DIR', 'data')).resolve(),
+                         int(os.getenv('OWNER_ID') or 0),
+                         Path(os.getenv('DATA_DIR') or os.getenv('RAILWAY_VOLUME_MOUNT_PATH') or 'data').resolve(),
                          os.getenv('CONTACT', '')[:300], int(os.getenv('MAX_REPLIES_PER_MINUTE', '10')),
                          int(os.getenv('DEDUP_SECONDS', '120')), os.getenv('PRICE_BOT_USERNAME', '').strip(),
                          os.getenv('PRICE_REQUEST_TEXT', '').strip(), os.getenv('PRICE_BUTTON_TEXT', '').strip(),
-                         int(os.getenv('PRICE_REFRESH_SECONDS', '600')))
+                         int(os.getenv('PRICE_REFRESH_SECONDS', '600')), os.getenv('TELEGRAM_SESSION', '').strip())
         except ValueError as exc:
             raise ValueError('API_ID, OWNER_ID и лимиты должны быть целыми числами') from exc
         if result.api_id <= 0 or (not login_only and result.owner_id <= 0):
@@ -68,6 +71,15 @@ class Config:
             raise ValueError('PRICE_REFRESH_SECONDS: от 60 до 86400 секунд')
         if result.price_bot and bool(result.price_request) == bool(result.price_button):
             raise ValueError('Для источника прайса укажи одно из PRICE_REQUEST_TEXT или PRICE_BUTTON_TEXT')
+        if not login_only:
+            if os.getenv('RAILWAY_PROJECT_ID') or os.getenv('RAILWAY_ENVIRONMENT_ID'):
+                mount = os.getenv('RAILWAY_VOLUME_MOUNT_PATH')
+                if not mount:
+                    raise ValueError('На Railway подключи Volume с путём /data и задай DATA_DIR=/data. См. RAILWAY.md.')
+                if not result.data_dir.is_relative_to(Path(mount).resolve()):
+                    raise ValueError('DATA_DIR должен находиться внутри Railway Volume. Для /data задай DATA_DIR=/data.')
+            if result.telegram_session:
+                load_string_session(result.telegram_session)
         result.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         return result
 
@@ -535,15 +547,16 @@ async def login(config: Config):
 
 
 async def run(config: Config):
+    session = load_string_session(config.telegram_session) if config.telegram_session else str(config.data_dir / 'account')
     store = Store(config.data_dir / 'catalog.sqlite3')
-    client = TelegramClient(str(config.data_dir / 'account'), config.api_id, config.api_hash,
+    client = TelegramClient(session, config.api_id, config.api_hash,
                             catch_up=False, flood_sleep_threshold=0, request_retries=0)
     bot = Bot(config.bot_token)
     tasks: list[asyncio.Task] = []
     try:
         await client.connect()
         if not await client.is_user_authorized():
-            raise ValueError('Сначала выполни: python -m catalog_bot login')
+            raise ValueError('Сессия Telegram не авторизована. Выполни login локально; для Railway также session-env. См. RAILWAY.md.')
         me = await client.get_me()
         if me.bot:
             raise ValueError('Для чтения чужих групп подключи свой пользовательский аккаунт через login')

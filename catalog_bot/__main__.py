@@ -35,7 +35,7 @@ class InstanceLock:
 
 def main():
     parser = argparse.ArgumentParser(description='Отдельный Telegram-бот для ответов по наличию')
-    parser.add_argument('command', choices=['login', 'run', 'demo', 'check-catalog', 'check-price'])
+    parser.add_argument('command', choices=['login', 'session-env', 'run', 'demo', 'check-catalog', 'check-price'])
     parser.add_argument('file', nargs='?')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s: %(message)s')
@@ -61,8 +61,13 @@ def main():
                     print(build_reply(found) if found else 'Ответ не отправляется.')
             return
         from .app import Config, login, run
-        config = Config.from_env(login_only=args.command == 'login')
+        config = Config.from_env(login_only=args.command in {'login', 'session-env'})
         with InstanceLock(config.data_dir):
+            if args.command == 'session-env':
+                from .sessions import export_session
+                path = export_session(config.data_dir)
+                print(f'Переменная для Railway сохранена в {path}. Скопируй её в Variables; файл не публикуй.')
+                return
             asyncio.run(login(config) if args.command == 'login' else run(config))
     except (ValueError, OSError) as exc:
         parser.exit(1, str(exc) + '\n')
