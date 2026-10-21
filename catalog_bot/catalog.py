@@ -243,8 +243,14 @@ def intent(text: str, allow_bare: bool) -> str:
     trailing_price = re.search(r"\b(\d{4,7})(?:[,.]\d{1,2})?\s*$", n)
     if trailing_price and int(trailing_price[1]) not in {1024, 2048}:
         return "sell"
-    if allow_bare and not CHATTER.search(n) and len(words(n)) <= 24:
-        return "bare"
+    if allow_bare and not CHATTER.search(n):
+        if len(words(n)) <= 24:
+            return "bare"
+        # A list of short product requests can exceed the single-title limit.
+        # Keep every line subject to the same intent guards as an individual title.
+        segments = request_segments(text) if '\n' in text else []
+        if len(segments) > 1 and all(intent(segment, allow_bare=True) == 'bare' for segment in segments):
+            return "bare"
     return "uncertain"
 
 
