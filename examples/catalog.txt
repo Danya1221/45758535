@@ -1,0 +1,13 @@
+# Учебные позиции и вымышленные цены. Перед работой замени на своё наличие.
+Название | Цена | Остаток | Артикул
+iPhone 17 256GB Black SIM | 85000 | 2 |
+iPhone 17 512GB White eSIM | 95000 | 1 |
+iPhone 17 Pro 256GB Silver SIM | 105000 | 1 |
+iPhone 17 Pro Max 256GB Silver SIM+eSIM | 115000 | 2 | MDE44
+iPhone 17 Pro Max 512GB Blue eSIM | 125000 | 1 |
+iPhone 18 Pro Max 1TB Glacier eSIM | 150000 | 1 |
+Samsung A57 12/512 A.Lilac | 45000 | 3 |
+Marshall Emberton III Black | 12000 | 2 |
+RayBan Gen 2 photochromic Black размер M | 30000 | 1 |
+Nothing Phone3 512GB 16GB A024 White | 60000 | 1 |
+iPad 11 128GB Wi-Fi Yellow | 40000 | 0 |
