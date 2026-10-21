@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -141,6 +142,65 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('модель: iPhone 17', self.texts()[-1])
         self.assertIn('память: 256 ГБ', self.texts()[-1])
         self.assertIn('85 000 ₽', self.texts()[-1])
+
+    async def test_markup_changes_quote_and_budget_but_preserves_source_export(self):
+        await self.feed('/catalog')
+        await self.feed('Samsung Galaxy S26 Ultra 12/512 Black|91500|1')
+        await self.feed('/markup phones percent 2')
+        await self.feed('/test Куплю сасунг с26 ультра 512 черный до 93 000')
+        self.assertIn('Совпадений: 0', self.texts()[-1])
+        await self.feed('/test Куплю сасунг с26 ультра 512 черный до 93 330')
+        self.assertIn('93 330 ₽', self.texts()[-1])
+        self.assertIn('Категории для наценки: Телефоны', self.texts()[-1])
+        self.assertEqual(self.store.products()[0].price, Decimal('91500'))
+        await self.feed('/stock')
+        document = self.transport.calls[-1].document
+        exported = document.data.decode('utf-8-sig')
+        self.assertIn('|91500|', exported)
+        self.assertNotIn('93330', exported)
+
+    async def test_markup_category_off_clear_and_reset(self):
+        await self.feed('/catalog')
+        await self.feed('iPhone 17 256 Black|85000|1\nXiaomi Pad 7 8/256 Gray|28900|1')
+        await self.feed('/markup default fixed 1000')
+        await self.feed('/markup phones percent 2')
+        await self.feed('/test iPhone 17 256 Black')
+        self.assertIn('86 700 ₽', self.texts()[-1])
+        await self.feed('/test Xiaomi Pad 7 8/256 Gray')
+        self.assertIn('29 900 ₽', self.texts()[-1])
+        await self.feed('/markup phones off')
+        await self.feed('/test iPhone 17')
+        self.assertIn('85 000 ₽', self.texts()[-1])
+        await self.feed('/markup phones clear')
+        await self.feed('/test iPhone 17')
+        self.assertIn('86 000 ₽', self.texts()[-1])
+        await self.feed('/markup reset')
+        await self.feed('/test iPhone 17')
+        self.assertIn('85 000 ₽', self.texts()[-1])
+
+    async def test_invalid_markup_and_unauthorized_commands_do_not_change_rules(self):
+        await self.feed('/markup phones fixed 1500')
+        before = self.store.markup_policy().to_data()
+        version = self.store.get('pricing_version')
+        for text in ('/markup phones fixed -10', '/markup phones percent NaN',
+                     '/markup unknown fixed 50', '/markup phones fixed 10 extra'):
+            await self.feed(text)
+            self.assertIn('Наценка не изменена', self.texts()[-1])
+        await self.feed('/markup reset', user_id=66)
+        await self.feed('/markup reset', chat_type='group')
+        self.assertEqual(self.store.markup_policy().to_data(), before)
+        self.assertEqual(self.store.get('pricing_version'), version)
+
+    async def test_markup_leaves_import_mode_and_menu_button_shows_help(self):
+        await self.feed('/catalog')
+        message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
+        callback = CallbackQuery(id='markup-test', from_user=User(id=55, is_bot=False, first_name='Test'),
+                                 chat_instance='instance', message=message, data='markup')
+        await self.app.dp.feed_update(self.bot, Update(update_id=100, callback_query=callback))
+        self.assertIn('/markup phones percent 2', self.texts()[-1])
+        self.assertLess(len(self.texts()[-1]), 4000)
+        await self.feed('iPhone 17|85000|1')
+        self.assertEqual(self.store.products(), [])
 
 
 if __name__ == '__main__':

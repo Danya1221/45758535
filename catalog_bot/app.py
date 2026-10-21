@@ -25,6 +25,7 @@ from .engine import Engine, Incoming, SendFailure
 from .storage import Store
 from .prices import FOOTER, PriceFeedError, parse_price_feed
 from .price_sync import PriceSync, format_summary
+from .pricing import CATEGORIES, MarkupPolicy, MarkupRule, category_for, format_policy, price_products, resolve_category
 from .sessions import load_string_session
 
 log = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ def menu():
     return keyboard([
         [('💰 Загрузить прайс', 'price'), ('💬 Группы', 'chats:0')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
+        [('💸 Наценка', 'markup')],
         [('▶️ Включить ответы', 'run'), ('⏸ Пауза', 'pause')],
     ])
 
@@ -194,7 +196,8 @@ class Application:
                 f"Названия без «куплю»: {'учитываются' if self.store.get('allow_bare', True) else 'пропускаются'}\n"
                 'Куда отвечаем: на исходное сообщение в группе, от подключённого аккаунта.\n'
                 f'Лимит: {self.config.max_per_minute} ответов в минуту.\n'
-                'Остаток не уменьшается при предложении товара.')
+                'Остаток не уменьшается при предложении товара.\n\n' +
+                format_policy(self.store.markup_policy()))
 
     async def activate(self, message: Message):
         if not any(p.eligible for p in self.store.products()):
@@ -239,8 +242,25 @@ class Application:
             text += '\nПодключённый аккаунт пока не состоит в группах.'
         await message.answer(text, reply_markup=keyboard(rows))
 
+    async def show_markup(self, message: Message):
+        categories = '\n'.join(f'{key} — {label}' for key, label in CATEGORIES.items())
+        await message.answer(
+            format_policy(self.store.markup_policy()) + '\n\n'
+            'Команды (цифры для примера):\n'
+            '/markup default fixed 1000 — общее правило +1 000 ₽\n'
+            '/markup phones percent 2 — телефоны +2%\n'
+            '/markup tablets fixed 1500 — планшеты +1 500 ₽\n'
+            '/markup phones off — телефоны без наценки\n'
+            '/markup phones clear — вернуть общее правило\n'
+            '/markup default off — общее правило 0\n'
+            '/markup reset — убрать все наценки\n\n'
+            'Правило категории заменяет общее. Фиксированная сумма и процент не складываются. '
+            'Цена округляется до копеек. Бюджет покупателя проверяется по итоговой цене.\n\n'
+            'Категории:\n' + categories,
+            parse_mode=None, reply_markup=menu())
+
     async def show_test(self, message: Message, text: str):
-        products = self.store.products()
+        products = price_products(self.store.products(), self.store.markup_policy())
         if not products:
             await message.answer('Сначала загрузи список: /catalog')
             return
@@ -248,12 +268,14 @@ class Application:
         classification, found = report.classification, report.products
         labels = {'buy': 'запрос на покупку', 'bare': 'название товара без «куплю»',
                   'sell': 'предложение продавца', 'uncertain': 'неопределённое сообщение'}
-        text_out = f'Тип: {labels[classification]}\nСовпадений: {len(found)}\n'
+        text_out = f'Тип: {labels[classification]}\nСовпадений: {len(found)}\nЦена для покупателя с настроенной наценкой.\n'
         details = '\n'.join(report.details)
         if len(details) > 1600:
             details = details[:1550] + '\n…Проверь остальные товарные строки отдельными запросами.'
         text_out += details + '\n'
         if found:
+            categories = ', '.join(CATEGORIES[key] for key in sorted({category_for(p) for p in found}))
+            text_out += f'Категории для наценки: {categories}.\n'
             text_out += '\nТакой ответ будет отправлен при включённых ответах:\n\n' + build_reply(found, self.store.get('intro'), self.config.contact)
         else:
             text_out += ('\nОтвета не будет. Проверь модель, версию, память, цвет, SIM и остаток. '
@@ -289,8 +311,9 @@ class Application:
         async def start(message: Message, state: FSMContext):
             await state.clear()
             await message.answer('Бот отвечает по актуальному прайсу в выбранных группах.\n\n'
-                                 '1. /price — загрузить прайс от поставщика; /catalog — свой список.\n2. /chats — выбрать группы.\n'
-                                 '3. /test — проверить запрос.\n4. /run — включить ответы.\n\n'
+                                 '1. /price — загрузить прайс от поставщика; /catalog — свой список.\n'
+                                 '2. /markup — настроить наценку.\n3. /chats — выбрать группы.\n'
+                                 '4. /test — проверить запрос.\n5. /run — включить ответы.\n\n'
                                  '/pause — остановить; /status — статус; /stock — текущий список; '
                                  '/bare — запросы без «куплю»; /intro — начало ответа; /tail — последние отправки.', reply_markup=menu())
 
@@ -380,6 +403,37 @@ class Application:
             await message.answer(f"Названия без «куплю»: {'учитываются' if self.store.get('allow_bare', True) else 'пропускаются'}.\n"
                                  '/bare on — учитывать; /bare off — требовать намерение купить.')
 
+        @dp.message(Command('markup'))
+        async def markup(message: Message, state: FSMContext):
+            await state.clear()
+            args = (message.text or '').partition(' ')[2].strip()
+            if not args:
+                await self.show_markup(message)
+                return
+            try:
+                if args.casefold() == 'reset':
+                    policy = MarkupPolicy()
+                else:
+                    policy = self.store.markup_policy()
+                    parts = args.split(maxsplit=2)
+                    if len(parts) < 2:
+                        raise ValueError('Укажи категорию и правило: /markup phones percent 2')
+                    category = resolve_category(parts[0])
+                    mode = parts[1].casefold()
+                    if mode in {'off', 'clear'} and len(parts) == 2:
+                        policy = (policy.with_rule(category, MarkupRule.parse('fixed', '0')) if mode == 'off'
+                                  else policy.without_rule(category))
+                    elif len(parts) == 3:
+                        policy = policy.with_rule(category, MarkupRule.parse(mode, parts[2]))
+                    else:
+                        raise ValueError('Формат: /markup phones fixed 1000 или /markup phones percent 2')
+                self.store.set_markup_policy(policy)
+            except ValueError as exc:
+                await message.answer(f'Наценка не изменена. {exc}\nТекущие правила и справка: /markup', parse_mode=None)
+                return
+            await message.answer('✅ Наценка сохранена. Новые ответы и /test используют итоговую цену.\n\n' +
+                                 format_policy(policy), parse_mode=None, reply_markup=menu())
+
         @dp.message(Command('intro'))
         async def intro(message: Message, state: FSMContext):
             await state.set_state(Inputs.intro)
@@ -401,7 +455,7 @@ class Application:
                     lines.extend((f'• {p.name}{p.country}', f'{p.price_country} От {p.min_qty} шт - {p.price}', ''))
                 lines.append(f'Всего найдено {len(products)} товаров')
                 await message.answer_document(BufferedInputFile('\n'.join(lines).encode('utf-8-sig'), filename='my_price.txt'),
-                                              caption='Текущая версия прайса. Повторная загрузка — через /price. Остатки не указаны источником.')
+                                              caption='Исходные цены без наценки. Повторная загрузка — через /price. Остатки не указаны источником.')
                 return
             buffer = io.StringIO()
             writer = csv.writer(buffer, delimiter='|', lineterminator='\n')
@@ -409,7 +463,8 @@ class Application:
             for p in products:
                 suffix = (' ' + (p.country or p.price_country)) if p.country or p.price_country else ''
                 writer.writerow([p.name + suffix, str(p.price) if p.price is not None else '', p.stock if p.stock is not None else 'не указан', p.sku])
-            await message.answer_document(BufferedInputFile(buffer.getvalue().encode('utf-8-sig'), filename='my_catalog.txt'))
+            await message.answer_document(BufferedInputFile(buffer.getvalue().encode('utf-8-sig'), filename='my_catalog.txt'),
+                                          caption='Текущий список с исходными ценами без наценки.')
 
         @dp.message(Command('sample'))
         async def sample(message: Message):
@@ -442,6 +497,9 @@ class Application:
             elif action == 'test':
                 await state.set_state(Inputs.test)
                 await message.answer('Пришли пример запроса. Сообщения в группы не отправляются. Отмена: /cancel.')
+            elif action == 'markup':
+                await state.clear()
+                await self.show_markup(message)
             elif action == 'status':
                 await message.answer(self.status(), reply_markup=menu())
             elif action == 'home':
@@ -573,6 +631,7 @@ async def run(config: Config):
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
             ('start', 'Меню'), ('price', 'Загрузить прайс'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
+            ('markup', 'Наценка по категориям'),
             ('test', 'Проверить запрос'), ('run', 'Включить ответы'), ('pause', 'Пауза'),
             ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки')]])
         store.prune()

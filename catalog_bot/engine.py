@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 
 from .catalog import build_reply, find_products
 from .storage import Store
+from .pricing import price_products
 
 
 @dataclass(frozen=True)
@@ -53,12 +54,16 @@ class Engine:
             if not -30 <= now - message.timestamp <= self.max_age:
                 return "old"
             version = self.store.get('catalog_version', 0)
-            classification, found = await asyncio.to_thread(find_products, message.text, self.store.products(), self.store.get('allow_bare', True))
+            pricing_version = self.store.get('pricing_version', 0)
+            quoted_products = price_products(self.store.products(), self.store.markup_policy())
+            classification, found = await asyncio.to_thread(find_products, message.text, quoted_products, self.store.get('allow_bare', True))
             if not found:
                 return "sell" if classification == 'sell' else "no_match"
             # Pause, chat removal or inventory updates may happen while matching.
             if (not self.store.get('active', False) or message.chat_id not in self.store.chats()
-                    or version != self.store.get('catalog_version', 0) or not self.store.get('price_ready', True)):
+                    or version != self.store.get('catalog_version', 0)
+                    or pricing_version != self.store.get('pricing_version', 0)
+                    or not self.store.get('price_ready', True)):
                 return "cancelled"
             if self.store.sent_since(now - 60) >= self.max_per_minute:
                 return "rate_limited"

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .catalog import Product, normalize, product_key
 from .prices import PriceFeedError
+from .pricing import MarkupPolicy
 
 
 class Store:
@@ -52,6 +53,7 @@ class Store:
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('allow_bare', 'true')")
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('intro', 'Есть в наличии:')")
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('catalog_version', '0')")
+        self.db.execute("INSERT OR IGNORE INTO settings VALUES ('pricing_version', '0')")
         # An interrupted send must not be retried automatically after a restart.
         if self.db.execute("SELECT 1 FROM deliveries WHERE status='pending'").fetchone():
             self.db.execute("UPDATE deliveries SET status='uncertain', detail='process_restart' WHERE status='pending'")
@@ -75,6 +77,21 @@ class Store:
                         row['stock'] if row['stock_known'] else None, row['sku'], row['country'],
                         row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])))
                 for row in self.db.execute("SELECT * FROM products ORDER BY id")]
+
+    def markup_policy(self) -> MarkupPolicy:
+        return MarkupPolicy.from_data(self.get('markup_rules'))
+
+    def set_markup_policy(self, policy: MarkupPolicy):
+        # Revalidate the serialized snapshot before replacing persisted rules.
+        validated = MarkupPolicy.from_data(policy.to_data())
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.set('markup_rules', validated.to_data())
+            self.set('pricing_version', self.get('pricing_version', 0) + 1)
+            self.db.execute('COMMIT')
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
 
     def _write_products(self, products):
         self.db.execute('DELETE FROM products')
