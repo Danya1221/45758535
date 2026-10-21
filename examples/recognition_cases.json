@@ -1,0 +1,3553 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "title": "Independent recognition regression corpus",
+    "catalog_kind": "synthetic_test_only",
+    "prices": "All prices are fictional teaching values in RUB, never a working supplier price list.",
+    "oracle": "Handwritten cases and fixed generated-group SKU expectations were authored independently of the parser/matcher. Generated queries are deterministic Cartesian products of explicit string parts; they do not infer expectations from product names.",
+    "real_supplier_fixtures": "Real user-supplied fragments remain separately in examples/request_price_excerpt.txt and examples/supplier_price_excerpt.txt; this file is synthetic.",
+    "scope": "Conservative model/brand/version/spec matching; listed aliases only. An ambiguous or unsupported request must not fall back to a neighboring model.",
+    "expansion": "Each generated group enumerates parts in JSON order with itertools.product; duplicate query strings inside one group are removed without changing order.",
+    "context": "A case may restrict the catalogue with catalog_skus; by default all competing products are present. Expected SKUs must be within that explicit context."
+  },
+  "products": [
+    {
+      "sku": "IP17-256-BK-SIM",
+      "name": "Apple iPhone 17 256GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-256-BK-DUAL",
+      "name": "Apple iPhone 17 256GB Black 2SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-256-BK-ESIM",
+      "name": "Apple iPhone 17 256GB Black eSIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-256-BK-COMBO",
+      "name": "Apple iPhone 17 256GB Black SIM+eSIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-256-WH-SIM",
+      "name": "Apple iPhone 17 256GB White SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-512-BK-SIM",
+      "name": "Apple iPhone 17 512GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP16-256-BK-SIM",
+      "name": "Apple iPhone 16 256GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP18-256-BK-SIM",
+      "name": "Apple iPhone 18 256GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17P-256-BK-SIM",
+      "name": "Apple iPhone 17 Pro 256GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17PM-256-BK-SIM",
+      "name": "Apple iPhone 17 Pro Max 256GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17PM-256-BL-SIM",
+      "name": "Apple iPhone 17 Pro Max 256GB Blue SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17PM-512-BK-SIM",
+      "name": "Apple iPhone 17 Pro Max 512GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17PLUS-256-BK-SIM",
+      "name": "Apple iPhone 17 Plus 256GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17AIR-256-BK-SIM",
+      "name": "Apple iPhone 17 Air 256GB Black SIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP18PM-1TB-GL-ESIM",
+      "name": "Apple iPhone 18 Pro Max 1TB Glacier eSIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IPAD11-128-WIFI",
+      "name": "Apple iPad 11 128GB Silver Wi-Fi",
+      "price": "1000"
+    },
+    {
+      "sku": "IPAD11-128-CELL",
+      "name": "Apple iPad 11 128GB Silver Cellular",
+      "price": "1000"
+    },
+    {
+      "sku": "IPAD11-256-WIFI",
+      "name": "Apple iPad 11 256GB Silver Wi-Fi",
+      "price": "1000"
+    },
+    {
+      "sku": "IPAD10-128-WIFI",
+      "name": "Apple iPad 10 128GB Silver Wi-Fi",
+      "price": "1000"
+    },
+    {
+      "sku": "S26-12-256-BK",
+      "name": "Samsung Galaxy S26 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "S26PLUS-12-256-BK",
+      "name": "Samsung Galaxy S26+ 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "S26U-12-256-BK",
+      "name": "Samsung Galaxy S26 Ultra 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "S26U-12-512-BK",
+      "name": "Samsung Galaxy S26 Ultra 12/512GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "S26U-16-512-BK",
+      "name": "Samsung Galaxy S26 Ultra 16/512GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "S26U-12-512-WH",
+      "name": "Samsung Galaxy S26 Ultra 12/512GB White",
+      "price": "1000"
+    },
+    {
+      "sku": "S25U-12-512-BK",
+      "name": "Samsung Galaxy S25 Ultra 12/512GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "S26FE-12-256-BK",
+      "name": "Samsung Galaxy S26 FE 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "A57-8-256-BK",
+      "name": "Samsung Galaxy A57 8/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "A57-12-512-LI",
+      "name": "Samsung Galaxy A57 12/512GB Lilac",
+      "price": "1000"
+    },
+    {
+      "sku": "A56-8-256-BK",
+      "name": "Samsung Galaxy A56 8/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "TAB-A11-4-64-GR",
+      "name": "Samsung Galaxy Tab A11 4/64GB Gray Wi-Fi",
+      "price": "1000"
+    },
+    {
+      "sku": "OP15-12-256-BK",
+      "name": "OnePlus 15 12/256GB Infinite Black",
+      "price": "1000"
+    },
+    {
+      "sku": "OP15-16-512-VI",
+      "name": "OnePlus 15 16/512GB Ultra Violet",
+      "price": "1000"
+    },
+    {
+      "sku": "OP15R-12-256-MI",
+      "name": "OnePlus 15R 12/256GB Mint Breeze",
+      "price": "1000"
+    },
+    {
+      "sku": "OP15R-12-512-MI",
+      "name": "OnePlus 15R 12/512GB Mint Breeze",
+      "price": "1000"
+    },
+    {
+      "sku": "OP14R-12-256-MI",
+      "name": "OnePlus 14R 12/256GB Mint Breeze",
+      "price": "1000"
+    },
+    {
+      "sku": "HON600-12-256-WH",
+      "name": "Honor 600 12/256GB Golden White",
+      "price": "1000"
+    },
+    {
+      "sku": "HON600-8-256-BK",
+      "name": "Honor 600 8/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "HON600L-8-256-GD",
+      "name": "Honor 600 Lite 8/256GB Gold",
+      "price": "1000"
+    },
+    {
+      "sku": "HON600P-12-256-BK",
+      "name": "Honor 600 Pro 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "HON600P-12-512-BK",
+      "name": "Honor 600 Pro 12/512GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "HON500L-8-256-GD",
+      "name": "Honor 500 Lite 8/256GB Gold",
+      "price": "1000"
+    },
+    {
+      "sku": "HONM8P-16-1TB-GD",
+      "name": "Honor Magic 8 Pro 16/1TB Sunrise Gold",
+      "price": "1000"
+    },
+    {
+      "sku": "HONM8P-32-256-BK",
+      "name": "Honor Magic 8 Pro 32/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "XIA17-12-256-BK",
+      "name": "Xiaomi 17 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "XIA17P-12-256-BK",
+      "name": "Xiaomi 17 Pro 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "XIA17PM-12-256-BK",
+      "name": "Xiaomi 17 Pro Max 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "RED17-8-256-BK",
+      "name": "Xiaomi Redmi 17 8/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "REDN15-8-256-BL-NFC",
+      "name": "Xiaomi Redmi Note 15 8/256GB Blue NFC",
+      "price": "1000"
+    },
+    {
+      "sku": "REDN15-8-256-BL-NONFC",
+      "name": "Xiaomi Redmi Note 15 8/256GB Blue NO NFC",
+      "price": "1000"
+    },
+    {
+      "sku": "REDN15-8-256-BL-UNKNOWN",
+      "name": "Xiaomi Redmi Note 15 8/256GB Blue",
+      "price": "1000"
+    },
+    {
+      "sku": "REDN15P-8-256-BL",
+      "name": "Xiaomi Redmi Note 15 Pro 8/256GB Blue NFC",
+      "price": "1000"
+    },
+    {
+      "sku": "REDN14-8-256-BL",
+      "name": "Xiaomi Redmi Note 14 8/256GB Blue NFC",
+      "price": "1000"
+    },
+    {
+      "sku": "POCOF7-12-256-BK",
+      "name": "Xiaomi POCO F7 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "POCOF7P-12-256-BK",
+      "name": "Xiaomi POCO F7 Pro 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "PIX11-12-256-OB",
+      "name": "Google Pixel 11 12/256GB Obsidian",
+      "price": "1000"
+    },
+    {
+      "sku": "PIX11P-16-256-OB",
+      "name": "Google Pixel 11 Pro 16/256GB Obsidian",
+      "price": "1000"
+    },
+    {
+      "sku": "PIX11PXL-16-256-OB",
+      "name": "Google Pixel 11 Pro XL 16/256GB Obsidian",
+      "price": "1000"
+    },
+    {
+      "sku": "PIX11PF-16-512-OB",
+      "name": "Google Pixel 11 Pro Fold 16/512GB Obsidian",
+      "price": "1000"
+    },
+    {
+      "sku": "PIX10P-16-256-OB",
+      "name": "Google Pixel 10 Pro 16/256GB Obsidian",
+      "price": "1000"
+    },
+    {
+      "sku": "PIX17-12-256-BK",
+      "name": "Google Pixel 17 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "VIVOX300-12-256-BK",
+      "name": "Vivo X300 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "VIVOX300P-12-256-BK",
+      "name": "Vivo X300 Pro 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "VIVOX200-12-256-BK",
+      "name": "Vivo X200 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "REALGT8-12-256-BK",
+      "name": "Realme GT 8 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "REALGT8P-12-256-BK",
+      "name": "Realme GT 8 Pro 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "REAL15-8-256-BK",
+      "name": "Realme 15 8/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "NOTH3-16-512-WH",
+      "name": "Nothing Phone 3 16/512GB White",
+      "price": "1000"
+    },
+    {
+      "sku": "NOTH3-12-256-BK",
+      "name": "Nothing Phone 3 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "NOTH3A-12-256-BK",
+      "name": "Nothing Phone 3a 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "NOTH3AP-12-256-BK",
+      "name": "Nothing Phone 3a Pro 12/256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "SWITCH2-256-BK",
+      "name": "Nintendo Switch 2 256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "SWITCH1-32-BK",
+      "name": "Nintendo Switch 32GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "SWITCHOLED-64-WH",
+      "name": "Nintendo Switch OLED 64GB White",
+      "price": "1000"
+    },
+    {
+      "sku": "SWITCHLITE-32-GR",
+      "name": "Nintendo Switch Lite 32GB Gray",
+      "price": "1000"
+    },
+    {
+      "sku": "PS5-SLIM-DISC",
+      "name": "Sony PlayStation 5 Slim Disc 1TB White",
+      "price": "1000"
+    },
+    {
+      "sku": "PS5-SLIM-DIGITAL",
+      "name": "Sony PlayStation 5 Slim Digital 1TB White",
+      "price": "1000"
+    },
+    {
+      "sku": "PS5-PRO",
+      "name": "Sony PlayStation 5 Pro 2TB White",
+      "price": "1000"
+    },
+    {
+      "sku": "WHXM6-BK",
+      "name": "Sony WH1000XM6 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "WHXM5-BK",
+      "name": "Sony WH1000XM5 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "WFXM6-BK",
+      "name": "Sony WF1000XM6 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "META-RB-G2-BK-GR",
+      "name": "Meta Ray-Ban Wayfarer Gen 2 F Black L Green Size M RW4012",
+      "price": "1000"
+    },
+    {
+      "sku": "META-RB-G2-GR-BK",
+      "name": "Meta Ray-Ban Wayfarer Gen 2 F Green L Black Size M RW4013",
+      "price": "1000"
+    },
+    {
+      "sku": "META-RB-G1-BK-GR",
+      "name": "Meta Ray-Ban Wayfarer Gen 1 F Black L Green Size M RW4006",
+      "price": "1000"
+    },
+    {
+      "sku": "META-RB-G2-BK-GR-L",
+      "name": "Meta Ray-Ban Wayfarer Gen 2 F Black L Green Size L RW4014",
+      "price": "1000"
+    },
+    {
+      "sku": "META-OAK-HSTN-BK",
+      "name": "Meta Oakley HSTN Gen 1 Black Size M",
+      "price": "1000"
+    },
+    {
+      "sku": "META-OAK-VANG-BK",
+      "name": "Meta Oakley Vanguard Gen 1 Black Size M",
+      "price": "1000"
+    },
+    {
+      "sku": "META-QUEST3-512",
+      "name": "Meta Quest 3 512GB White",
+      "price": "1000"
+    },
+    {
+      "sku": "META-QUEST3S-256",
+      "name": "Meta Quest 3S 256GB White",
+      "price": "1000"
+    },
+    {
+      "sku": "DJI-OA5P",
+      "name": "DJI Osmo Action 5 Pro Black",
+      "price": "1000"
+    },
+    {
+      "sku": "DJI-OA4",
+      "name": "DJI Osmo Action 4 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "DJI-OP3",
+      "name": "DJI Osmo Pocket 3 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "DJI-MINI4P",
+      "name": "DJI Mini 4 Pro Gray",
+      "price": "1000"
+    },
+    {
+      "sku": "DJI-MINI4K",
+      "name": "DJI Mini 4K Gray",
+      "price": "1000"
+    },
+    {
+      "sku": "DJI-MIC2",
+      "name": "DJI Mic 2 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "INSTA-X5",
+      "name": "Insta360 X5 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "INSTA-X4",
+      "name": "Insta360 X4 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "INSTA-ACE2P",
+      "name": "Insta360 Ace Pro 2 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "INSTA-GO3S",
+      "name": "Insta360 GO 3S 128GB White",
+      "price": "1000"
+    },
+    {
+      "sku": "GOPRO-H13",
+      "name": "GoPro Hero 13 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "GOPRO-H12",
+      "name": "GoPro Hero 12 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "GAR-F8-47",
+      "name": "Garmin Fenix 8 47mm Black",
+      "price": "1000"
+    },
+    {
+      "sku": "GAR-F8-51",
+      "name": "Garmin Fenix 8 51mm Black",
+      "price": "1000"
+    },
+    {
+      "sku": "GAR-F7-47",
+      "name": "Garmin Fenix 7 47mm Black",
+      "price": "1000"
+    },
+    {
+      "sku": "GAR-FR970",
+      "name": "Garmin Forerunner 970 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "COROS-P3",
+      "name": "Coros Pace 3 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "COROS-P4",
+      "name": "Coros Pace 4 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "OURA4-S8-BK",
+      "name": "Oura Ring 4 Size 8 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "OURA4-S9-BK",
+      "name": "Oura Ring 4 Size 9 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "OURA3-S8-BK",
+      "name": "Oura Ring 3 Size 8 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-USED",
+      "name": "Apple iPhone 17 256GB Black SIM used",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-REFURB",
+      "name": "Apple iPhone 17 256GB Black SIM refurbished",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-DAMAGED",
+      "name": "Apple iPhone 17 256GB Black SIM damaged",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-CASE",
+      "name": "Чехол Apple iPhone 17 256GB Black",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-GLASS",
+      "name": "Стекло Apple iPhone 17 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-SCREEN",
+      "name": "Экран Apple iPhone 17 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-CHARGER",
+      "name": "Кабель Apple iPhone 17 Black",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-OUT",
+      "name": "Apple iPhone 17 256GB Black SIM",
+      "price": "1000",
+      "stock": 0
+    },
+    {
+      "sku": "IP17-WHOLESALE",
+      "name": "Apple iPhone 17 256GB Black SIM",
+      "price": "1000",
+      "min_qty": 5
+    },
+    {
+      "sku": "IP17-WARN",
+      "name": "Apple iPhone 17 256GB Black SIM",
+      "price": "1000",
+      "warnings": [
+        "unverified supplier row"
+      ]
+    },
+    {
+      "sku": "IP17-REG-US",
+      "name": "Apple iPhone 17 128GB Black eSIM",
+      "price": "1000",
+      "country": "🇺🇸",
+      "price_country": "🇺🇸"
+    },
+    {
+      "sku": "IP17-REG-CN",
+      "name": "Apple iPhone 17 128GB Black 2SIM",
+      "price": "1000",
+      "country": "🇨🇳",
+      "price_country": "🇨🇳"
+    },
+    {
+      "sku": "IP17-REG-JP",
+      "name": "Apple iPhone 17 128GB Black SIM+eSIM",
+      "price": "1000",
+      "country": "🇯🇵",
+      "price_country": "🇯🇵"
+    },
+    {
+      "sku": "IP17-REG-UNKNOWN",
+      "name": "Apple iPhone 17 128GB Black eSIM",
+      "price": "1000"
+    },
+    {
+      "sku": "IP17-NOPRICE",
+      "name": "Apple iPhone 17 64GB Black SIM",
+      "price": null
+    }
+  ],
+  "cases": [
+    {
+      "id": "iphone-en",
+      "category": "iphone",
+      "query": "iPhone 17 256 Black 1sim",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-ru",
+      "category": "iphone",
+      "query": "Куплю айфон17 256 гб черный 1 сим",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-case",
+      "category": "iphone",
+      "query": "IPHONE17 256GB BLACK SIM",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-mixed",
+      "category": "iphone",
+      "query": "Нужен Apple айфон 17 256 Black SIM",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-translit",
+      "category": "iphone",
+      "query": "Нужен aifon 17 256 black sim",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-esim",
+      "category": "sim",
+      "query": "iPhone17 256 black e-sim",
+      "expected": [
+        "IP17-256-BK-ESIM"
+      ]
+    },
+    {
+      "id": "iphone-2sim",
+      "category": "sim",
+      "query": "айфон 17 256 черный 2 сим",
+      "expected": [
+        "IP17-256-BK-DUAL"
+      ]
+    },
+    {
+      "id": "iphone-combo",
+      "category": "sim",
+      "query": "iPhone 17 256 black SIM+eSIM",
+      "expected": [
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-esim-plus-sim",
+      "category": "sim",
+      "query": "iPhone 17 256 black eSIM + SIM",
+      "expected": [
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-dualsim",
+      "category": "sim",
+      "query": "iPhone17 256 black dual sim",
+      "expected": [
+        "IP17-256-BK-DUAL"
+      ]
+    },
+    {
+      "id": "promax-en",
+      "category": "variant",
+      "query": "iPhone 17 ProMax 256 Black 1sim",
+      "expected": [
+        "IP17PM-256-BK-SIM"
+      ]
+    },
+    {
+      "id": "promax-pm",
+      "category": "variant",
+      "query": "айфон 17 пм 256 черный 1 сим",
+      "expected": [
+        "IP17PM-256-BK-SIM"
+      ]
+    },
+    {
+      "id": "promax-pmlatin",
+      "category": "variant",
+      "query": "iPhone 17PM 256 black sim",
+      "expected": [
+        "IP17PM-256-BK-SIM"
+      ]
+    },
+    {
+      "id": "promax-ru",
+      "category": "variant",
+      "query": "айфон17 про макс 256 черный сим",
+      "expected": [
+        "IP17PM-256-BK-SIM"
+      ]
+    },
+    {
+      "id": "iphone-pro",
+      "category": "variant",
+      "query": "iPhone17 Pro 256 Black SIM",
+      "expected": [
+        "IP17P-256-BK-SIM"
+      ]
+    },
+    {
+      "id": "iphone-plus",
+      "category": "variant",
+      "query": "айфон 17 плюс 256 черный сим",
+      "expected": [
+        "IP17PLUS-256-BK-SIM"
+      ]
+    },
+    {
+      "id": "iphone-air",
+      "category": "variant",
+      "query": "iPhone 17 Air 256 Black SIM",
+      "expected": [
+        "IP17AIR-256-BK-SIM"
+      ]
+    },
+    {
+      "id": "iphone-tb",
+      "category": "memory",
+      "query": "iPhone18 pro max 1024gb glacier esim",
+      "expected": [
+        "IP18PM-1TB-GL-ESIM"
+      ]
+    },
+    {
+      "id": "iphone-tb-ru",
+      "category": "memory",
+      "query": "айфон 18 pro max 1 тб glacier есим",
+      "expected": [
+        "IP18PM-1TB-GL-ESIM"
+      ]
+    },
+    {
+      "id": "iphone-broad",
+      "category": "iphone",
+      "query": "Куплю iPhone17 256 Black",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-DUAL",
+        "IP17-256-BK-ESIM",
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "iphone-memory-or",
+      "category": "memory",
+      "query": "iPhone17 256 или 512 Black SIM",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO",
+        "IP17-512-BK-SIM"
+      ]
+    },
+    {
+      "id": "iphone-color-or",
+      "category": "color",
+      "query": "iPhone17 256 Black или White SIM",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO",
+        "IP17-256-WH-SIM"
+      ]
+    },
+    {
+      "id": "ipad-ru",
+      "category": "ipad",
+      "query": "Нужен айпад11 128 серебристый вай фай",
+      "expected": [
+        "IPAD11-128-WIFI"
+      ]
+    },
+    {
+      "id": "ipad-cell",
+      "category": "ipad",
+      "query": "iPad 11 128 Cellular Silver",
+      "expected": [
+        "IPAD11-128-CELL"
+      ]
+    },
+    {
+      "id": "ipad-wifi",
+      "category": "ipad",
+      "query": "iPad11 128 WiFi Silver",
+      "expected": [
+        "IPAD11-128-WIFI"
+      ]
+    },
+    {
+      "id": "ipad-wrong-connectivity",
+      "category": "negative-unknown",
+      "query": "iPad11 512 Cellular",
+      "expected": []
+    },
+    {
+      "id": "samsung-en",
+      "category": "samsung",
+      "query": "Samsung Galaxy S26 Ultra 12/512GB Black",
+      "expected": [
+        "S26U-12-512-BK"
+      ]
+    },
+    {
+      "id": "samsung-ru",
+      "category": "samsung",
+      "query": "Куплю самсунг с26 ультра 12/512 черный",
+      "expected": [
+        "S26U-12-512-BK"
+      ]
+    },
+    {
+      "id": "samsung-typo",
+      "category": "samsung",
+      "query": "сасунг с26 ультра 12/512 black",
+      "expected": [
+        "S26U-12-512-BK"
+      ]
+    },
+    {
+      "id": "samsung-galaxy",
+      "category": "samsung",
+      "query": "галакси с26 ультра 12/512 черный",
+      "expected": [
+        "S26U-12-512-BK"
+      ]
+    },
+    {
+      "id": "samsung-splitram",
+      "category": "samsung",
+      "query": "Samsung S26 Ultra 512 GB 12 GB RAM Black",
+      "expected": [
+        "S26U-12-512-BK"
+      ]
+    },
+    {
+      "id": "samsung-base",
+      "category": "variant",
+      "query": "Galaxy S26 12/256 Black",
+      "expected": [
+        "S26-12-256-BK"
+      ]
+    },
+    {
+      "id": "samsung-plus",
+      "category": "variant",
+      "query": "самсунг с26+ 12/256 черный",
+      "expected": [
+        "S26PLUS-12-256-BK"
+      ]
+    },
+    {
+      "id": "samsung-fe",
+      "category": "variant",
+      "query": "Galaxy S26 FE 12/256 Black",
+      "expected": [
+        "S26FE-12-256-BK"
+      ]
+    },
+    {
+      "id": "samsung-a",
+      "category": "samsung",
+      "query": "самсунг а57 8/256 черный",
+      "expected": [
+        "A57-8-256-BK"
+      ]
+    },
+    {
+      "id": "samsung-lilac",
+      "category": "samsung",
+      "query": "Galaxy A57 12/512 Lilac",
+      "expected": [
+        "A57-12-512-LI"
+      ]
+    },
+    {
+      "id": "samsung-tab",
+      "category": "tablet",
+      "query": "Galaxy Tab A11 4/64 Gray Wi-Fi",
+      "expected": [
+        "TAB-A11-4-64-GR"
+      ]
+    },
+    {
+      "id": "oneplus-base",
+      "category": "oneplus",
+      "query": "OnePlus 15 12/256 Infinite Black",
+      "expected": [
+        "OP15-12-256-BK"
+      ]
+    },
+    {
+      "id": "oneplus-r",
+      "category": "oneplus",
+      "query": "OnePlus15R 12/256 Mint Breeze",
+      "expected": [
+        "OP15R-12-256-MI"
+      ]
+    },
+    {
+      "id": "oneplus-r-ru",
+      "category": "oneplus",
+      "query": "ванплас 15r 12/512 mint breeze",
+      "expected": [
+        "OP15R-12-512-MI"
+      ]
+    },
+    {
+      "id": "oneplus-base-512",
+      "category": "oneplus",
+      "query": "OnePlus15 16/512 Ultra Violet",
+      "expected": [
+        "OP15-16-512-VI"
+      ]
+    },
+    {
+      "id": "oneplus-r-neighbor",
+      "category": "negative-neighbor",
+      "query": "OnePlus 15R 16/512 Ultra Violet",
+      "expected": []
+    },
+    {
+      "id": "honor-base",
+      "category": "honor",
+      "query": "Honor 600 12/256 Golden White",
+      "expected": [
+        "HON600-12-256-WH"
+      ]
+    },
+    {
+      "id": "honor-lite",
+      "category": "honor",
+      "query": "хонор 600 лайт 8/256 золотой",
+      "expected": [
+        "HON600L-8-256-GD"
+      ]
+    },
+    {
+      "id": "honor-pro",
+      "category": "honor",
+      "query": "Honor600 Pro 12/512 Black",
+      "expected": [
+        "HON600P-12-512-BK"
+      ]
+    },
+    {
+      "id": "honor-magic",
+      "category": "honor",
+      "query": "Honor Magic8 Pro 16/1TB Sunrise Gold",
+      "expected": [
+        "HONM8P-16-1TB-GD"
+      ]
+    },
+    {
+      "id": "honor-ram32",
+      "category": "memory",
+      "query": "Honor Magic 8 Pro 32/256 Black",
+      "expected": [
+        "HONM8P-32-256-BK"
+      ]
+    },
+    {
+      "id": "honor-base-not-lite",
+      "category": "negative-neighbor",
+      "query": "Honor 600 8/256 Gold",
+      "expected": []
+    },
+    {
+      "id": "honor-lite-not-pro",
+      "category": "negative-neighbor",
+      "query": "Honor 600 Lite 12/512 Black",
+      "expected": []
+    },
+    {
+      "id": "xiaomi-ru",
+      "category": "xiaomi",
+      "query": "сяоми17 12/256 черный",
+      "expected": [
+        "XIA17-12-256-BK"
+      ]
+    },
+    {
+      "id": "xiaomi-translit",
+      "category": "xiaomi",
+      "query": "ксиаоми 17 про 12/256 черный",
+      "expected": [
+        "XIA17P-12-256-BK"
+      ]
+    },
+    {
+      "id": "xiaomi-promax",
+      "category": "xiaomi",
+      "query": "Xiaomi17 ProMax 12/256 Black",
+      "expected": [
+        "XIA17PM-12-256-BK"
+      ]
+    },
+    {
+      "id": "redmi-base",
+      "category": "redmi",
+      "query": "редми 17 8/256 черный",
+      "expected": [
+        "RED17-8-256-BK"
+      ]
+    },
+    {
+      "id": "redmi-note",
+      "category": "redmi",
+      "query": "Xiaomi Redmi Note15 8/256 Blue NFC",
+      "expected": [
+        "REDN15-8-256-BL-NFC"
+      ]
+    },
+    {
+      "id": "redmi-nonfc",
+      "category": "redmi",
+      "query": "редми ноут 15 8/256 синий без nfc",
+      "expected": [
+        "REDN15-8-256-BL-NONFC"
+      ]
+    },
+    {
+      "id": "redmi-pro",
+      "category": "redmi",
+      "query": "Redmi Note 15 Pro 8/256 Blue NFC",
+      "expected": [
+        "REDN15P-8-256-BL"
+      ]
+    },
+    {
+      "id": "poco-base",
+      "category": "poco",
+      "query": "поко f7 12/256 черный",
+      "expected": [
+        "POCOF7-12-256-BK"
+      ]
+    },
+    {
+      "id": "poco-pro",
+      "category": "poco",
+      "query": "Xiaomi POCO F7 Pro 12/256 Black",
+      "expected": [
+        "POCOF7P-12-256-BK"
+      ]
+    },
+    {
+      "id": "pixel-ru",
+      "category": "pixel",
+      "query": "гугл пиксель11 12/256 obsidian",
+      "expected": [
+        "PIX11-12-256-OB"
+      ]
+    },
+    {
+      "id": "pixel-pro",
+      "category": "pixel",
+      "query": "Pixel11 Pro 16/256 Obsidian",
+      "expected": [
+        "PIX11P-16-256-OB"
+      ]
+    },
+    {
+      "id": "pixel-xl",
+      "category": "pixel",
+      "query": "пиксель 11 про xl 16/256 obsidian",
+      "expected": [
+        "PIX11PXL-16-256-OB"
+      ]
+    },
+    {
+      "id": "pixel-fold",
+      "category": "pixel",
+      "query": "Google Pixel11 Pro Fold 16/512 Obsidian",
+      "expected": [
+        "PIX11PF-16-512-OB"
+      ]
+    },
+    {
+      "id": "pixel-marketing-color",
+      "category": "negative-color",
+      "query": "Pixel11 Pro 16/256 Black",
+      "expected": []
+    },
+    {
+      "id": "vivo-base",
+      "category": "vivo",
+      "query": "виво x300 12/256 черный",
+      "expected": [
+        "VIVOX300-12-256-BK"
+      ]
+    },
+    {
+      "id": "vivo-pro",
+      "category": "vivo",
+      "query": "Vivo X300 Pro 12/256 Black",
+      "expected": [
+        "VIVOX300P-12-256-BK"
+      ]
+    },
+    {
+      "id": "realme-ru",
+      "category": "realme",
+      "query": "реалми gt8 12/256 черный",
+      "expected": [
+        "REALGT8-12-256-BK"
+      ]
+    },
+    {
+      "id": "realme-pro",
+      "category": "realme",
+      "query": "Realme GT 8 Pro 12/256 Black",
+      "expected": [
+        "REALGT8P-12-256-BK"
+      ]
+    },
+    {
+      "id": "nothing-ru",
+      "category": "nothing",
+      "query": "насинг phone3 16/512 белый",
+      "expected": [
+        "NOTH3-16-512-WH"
+      ]
+    },
+    {
+      "id": "nothing-3a",
+      "category": "nothing",
+      "query": "Nothing Phone3a 12/256 Black",
+      "expected": [
+        "NOTH3A-12-256-BK"
+      ]
+    },
+    {
+      "id": "nothing-3apro",
+      "category": "nothing",
+      "query": "Nothing Phone 3a Pro 12/256 Black",
+      "expected": [
+        "NOTH3AP-12-256-BK"
+      ]
+    },
+    {
+      "id": "nothing-ram-storage",
+      "category": "memory",
+      "query": "Nothing Phone3 512GB 16GB White",
+      "expected": [
+        "NOTH3-16-512-WH"
+      ]
+    },
+    {
+      "id": "switch2",
+      "category": "console",
+      "query": "Nintendo Switch2 256 Black",
+      "expected": [
+        "SWITCH2-256-BK"
+      ]
+    },
+    {
+      "id": "switch-lite",
+      "category": "console",
+      "query": "нинтендо свитч лайт 32 серый",
+      "expected": [
+        "SWITCHLITE-32-GR"
+      ]
+    },
+    {
+      "id": "switch-oled",
+      "category": "console",
+      "query": "Nintendo Switch OLED 64 White",
+      "expected": [
+        "SWITCHOLED-64-WH"
+      ]
+    },
+    {
+      "id": "switch-base",
+      "category": "console",
+      "query": "Nintendo Switch 32 Black",
+      "expected": [
+        "SWITCH1-32-BK"
+      ]
+    },
+    {
+      "id": "ps5-disc",
+      "category": "console",
+      "query": "Sony PlayStation 5 Slim Disc 1TB White",
+      "expected": [
+        "PS5-SLIM-DISC"
+      ]
+    },
+    {
+      "id": "ps5-short",
+      "category": "console",
+      "query": "сони пс5 слим диск 1 тб белый",
+      "expected": [
+        "PS5-SLIM-DISC"
+      ]
+    },
+    {
+      "id": "ps5-digital",
+      "category": "console",
+      "query": "Sony PS5 Slim Digital 1TB White",
+      "expected": [
+        "PS5-SLIM-DIGITAL"
+      ]
+    },
+    {
+      "id": "ps5-pro",
+      "category": "console",
+      "query": "PlayStation 5 Pro 2TB White",
+      "expected": [
+        "PS5-PRO"
+      ]
+    },
+    {
+      "id": "sony-wh",
+      "category": "audio",
+      "query": "сони wh1000xm6 черный",
+      "expected": [
+        "WHXM6-BK"
+      ]
+    },
+    {
+      "id": "sony-wf",
+      "category": "audio",
+      "query": "Sony WF1000XM6 Black",
+      "expected": [
+        "WFXM6-BK"
+      ]
+    },
+    {
+      "id": "rayban-frame-lens",
+      "category": "glasses",
+      "query": "Meta RayBan Wayfarer Gen2 F Black L Green Size M",
+      "expected": [
+        "META-RB-G2-BK-GR"
+      ]
+    },
+    {
+      "id": "rayban-ru",
+      "category": "glasses",
+      "query": "мета райбан wayfarer gen2 f black l green размер m",
+      "expected": [
+        "META-RB-G2-BK-GR"
+      ]
+    },
+    {
+      "id": "rayban-reversed",
+      "category": "glasses",
+      "query": "Meta Ray-Ban Wayfarer Gen2 F Green L Black Size M",
+      "expected": [
+        "META-RB-G2-GR-BK"
+      ]
+    },
+    {
+      "id": "rayban-size",
+      "category": "glasses",
+      "query": "Meta Ray-Ban Wayfarer Gen2 F Black L Green Size L",
+      "expected": [
+        "META-RB-G2-BK-GR-L"
+      ]
+    },
+    {
+      "id": "oakley",
+      "category": "glasses",
+      "query": "мета оакли hstn gen1 black размер m",
+      "expected": [
+        "META-OAK-HSTN-BK"
+      ]
+    },
+    {
+      "id": "oakley-vanguard",
+      "category": "glasses",
+      "query": "Meta Oakley Vanguard Gen1 Black Size M",
+      "expected": [
+        "META-OAK-VANG-BK"
+      ]
+    },
+    {
+      "id": "quest3",
+      "category": "vr",
+      "query": "Meta Quest3 512 White",
+      "expected": [
+        "META-QUEST3-512"
+      ]
+    },
+    {
+      "id": "quest3s",
+      "category": "vr",
+      "query": "Meta Quest3S 256 White",
+      "expected": [
+        "META-QUEST3S-256"
+      ]
+    },
+    {
+      "id": "dji-action",
+      "category": "camera",
+      "query": "ди джи ай osmo action5 pro черный",
+      "expected": [
+        "DJI-OA5P"
+      ]
+    },
+    {
+      "id": "dji-pocket",
+      "category": "camera",
+      "query": "DJI Osmo Pocket3 Black",
+      "expected": [
+        "DJI-OP3"
+      ]
+    },
+    {
+      "id": "dji-mini",
+      "category": "camera",
+      "query": "диджиай мини4 про серый",
+      "expected": [
+        "DJI-MINI4P"
+      ]
+    },
+    {
+      "id": "dji-mini4k",
+      "category": "camera",
+      "query": "DJI Mini4K Gray",
+      "expected": [
+        "DJI-MINI4K"
+      ]
+    },
+    {
+      "id": "dji-mic",
+      "category": "audio",
+      "query": "DJI Mic2 Black",
+      "expected": [
+        "DJI-MIC2"
+      ]
+    },
+    {
+      "id": "insta-x5",
+      "category": "camera",
+      "query": "инста360 x5 черный",
+      "expected": [
+        "INSTA-X5"
+      ]
+    },
+    {
+      "id": "insta-ace",
+      "category": "camera",
+      "query": "Insta 360 Ace Pro2 Black",
+      "expected": [
+        "INSTA-ACE2P"
+      ]
+    },
+    {
+      "id": "insta-go",
+      "category": "camera",
+      "query": "Insta360 GO3S 128 White",
+      "expected": [
+        "INSTA-GO3S"
+      ]
+    },
+    {
+      "id": "gopro",
+      "category": "camera",
+      "query": "гоупро hero13 black",
+      "expected": [
+        "GOPRO-H13"
+      ]
+    },
+    {
+      "id": "garmin-fenix",
+      "category": "wearable",
+      "query": "гармин fenix8 47mm black",
+      "expected": [
+        "GAR-F8-47"
+      ]
+    },
+    {
+      "id": "garmin-size",
+      "category": "wearable",
+      "query": "Garmin Fenix8 51 mm Black",
+      "expected": [
+        "GAR-F8-51"
+      ]
+    },
+    {
+      "id": "garmin-forerunner",
+      "category": "wearable",
+      "query": "Garmin Forerunner970 Black",
+      "expected": [
+        "GAR-FR970"
+      ]
+    },
+    {
+      "id": "coros",
+      "category": "wearable",
+      "query": "корос pace3 черный",
+      "expected": [
+        "COROS-P3"
+      ]
+    },
+    {
+      "id": "oura",
+      "category": "wearable",
+      "query": "оура ring4 size 8 black",
+      "expected": [
+        "OURA4-S8-BK"
+      ]
+    },
+    {
+      "id": "oura-size",
+      "category": "wearable",
+      "query": "Oura Ring4 размер 9 Black",
+      "expected": [
+        "OURA4-S9-BK"
+      ]
+    },
+    {
+      "id": "explicit-iphone-not-xiaomi",
+      "category": "negative-brand",
+      "query": "iPhone 17 12/256 Black",
+      "expected": []
+    },
+    {
+      "id": "explicit-iphone-pro-ram",
+      "category": "negative-brand",
+      "query": "iPhone 17 Pro 12/256 Black",
+      "expected": []
+    },
+    {
+      "id": "explicit-iphone-pm-ram",
+      "category": "negative-brand",
+      "query": "iPhone 17 Pro Max 12/256 Black",
+      "expected": []
+    },
+    {
+      "id": "apple-redmi",
+      "category": "negative-brand",
+      "query": "Apple Redmi 17 8/256 Black",
+      "expected": []
+    },
+    {
+      "id": "samsung-iphone",
+      "category": "negative-brand",
+      "query": "Samsung iPhone17 256 Black",
+      "expected": []
+    },
+    {
+      "id": "xiaomi-iphone",
+      "category": "negative-brand",
+      "query": "Xiaomi iPhone17 256 Black",
+      "expected": []
+    },
+    {
+      "id": "mixed-iphone-xiaomi",
+      "category": "negative-brand",
+      "query": "iPhone Xiaomi 17 256 Black",
+      "expected": []
+    },
+    {
+      "id": "xiaomi-op",
+      "category": "negative-brand",
+      "query": "Xiaomi OnePlus 15 12/256 Black",
+      "expected": []
+    },
+    {
+      "id": "implicit-17",
+      "category": "negative-implicit",
+      "query": "17 256 Black",
+      "expected": []
+    },
+    {
+      "id": "implicit-17-pm",
+      "category": "negative-implicit",
+      "query": "17 Pro Max 256 Black",
+      "expected": []
+    },
+    {
+      "id": "implicit-pro",
+      "category": "negative-implicit",
+      "query": "Pro Max 256 Black",
+      "expected": []
+    },
+    {
+      "id": "only-memory",
+      "category": "negative-implicit",
+      "query": "256GB",
+      "expected": []
+    },
+    {
+      "id": "only-brand",
+      "category": "negative-implicit",
+      "query": "Куплю Apple",
+      "expected": []
+    },
+    {
+      "id": "only-sony",
+      "category": "negative-implicit",
+      "query": "Куплю Sony",
+      "expected": []
+    },
+    {
+      "id": "only-nintendo",
+      "category": "negative-implicit",
+      "query": "Нужен Nintendo",
+      "expected": []
+    },
+    {
+      "id": "only-garmin",
+      "category": "negative-implicit",
+      "query": "Куплю Garmin",
+      "expected": []
+    },
+    {
+      "id": "only-honor",
+      "category": "negative-implicit",
+      "query": "Нужен Honor",
+      "expected": []
+    },
+    {
+      "id": "only-oneplus",
+      "category": "negative-implicit",
+      "query": "OnePlus",
+      "expected": []
+    },
+    {
+      "id": "wrong-iphone-generation",
+      "category": "negative-neighbor",
+      "query": "iPhone 15 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-iphone-variant",
+      "category": "negative-neighbor",
+      "query": "iPhone 17 Ultra 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-s26-variant",
+      "category": "negative-neighbor",
+      "query": "Samsung S26 Pro 12/256 Black",
+      "expected": []
+    },
+    {
+      "id": "wrong-honor-generation",
+      "category": "negative-neighbor",
+      "query": "Honor 601 Lite 8/256 Gold",
+      "expected": []
+    },
+    {
+      "id": "wrong-oneplus-suffix",
+      "category": "negative-neighbor",
+      "query": "OnePlus 15T 12/256 Mint Breeze",
+      "expected": []
+    },
+    {
+      "id": "wrong-memory",
+      "category": "negative-unknown",
+      "query": "iPhone17 2TB Black SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-ram",
+      "category": "negative-unknown",
+      "query": "Samsung S26 Ultra 24/512 Black",
+      "expected": []
+    },
+    {
+      "id": "wrong-color",
+      "category": "negative-unknown",
+      "query": "iPhone17 256 Green SIM",
+      "expected": []
+    },
+    {
+      "id": "unknown-trait",
+      "category": "negative-unknown",
+      "query": "iPhone17 256 Black waterproof SIM",
+      "expected": []
+    },
+    {
+      "id": "unknown-model",
+      "category": "negative-unknown",
+      "query": "AsterPhone 17 256 Black",
+      "expected": []
+    },
+    {
+      "id": "missing-spec",
+      "category": "negative-unknown",
+      "query": "iPhone17 256 Black 24 RAM",
+      "expected": []
+    },
+    {
+      "id": "mint-is-not-green",
+      "category": "negative-color",
+      "query": "OnePlus15R 12/256 Green",
+      "expected": []
+    },
+    {
+      "id": "goldenwhite-is-not-gold",
+      "category": "negative-color",
+      "query": "Honor600 12/256 Gold",
+      "expected": []
+    },
+    {
+      "id": "wrong-storage-conflict",
+      "category": "negative-conflict",
+      "query": "iPhone17 256 512 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-color-conflict",
+      "category": "negative-conflict",
+      "query": "iPhone17 256 Black White SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-ram-conflict",
+      "category": "negative-conflict",
+      "query": "Samsung S26 Ultra 12/512 16 RAM Black",
+      "expected": []
+    },
+    {
+      "id": "wrong-sim-conflict",
+      "category": "negative-conflict",
+      "query": "iPhone17 256 Black SIM eSIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-sim2-conflict",
+      "category": "negative-conflict",
+      "query": "iPhone17 256 Black 1sim 2sim",
+      "expected": []
+    },
+    {
+      "id": "wrong-variant-conflict",
+      "category": "negative-conflict",
+      "query": "iPhone17 Pro Plus 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-model-conflict",
+      "category": "negative-conflict",
+      "query": "iPhone17 iPhone18 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-brands-conflict",
+      "category": "negative-conflict",
+      "query": "Samsung Galaxy S26 OnePlus15 12/256 Black",
+      "expected": []
+    },
+    {
+      "id": "seller",
+      "category": "negative-intent",
+      "query": "Продам iPhone17 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "seller-buy-mixed",
+      "category": "negative-intent",
+      "query": "Куплю iPhone17 256 Black SIM\nПродам Samsung S26",
+      "expected": []
+    },
+    {
+      "id": "seller-availability",
+      "category": "negative-intent",
+      "query": "В наличии iPhone17 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "seller-price",
+      "category": "negative-intent",
+      "query": "iPhone17 256 Black SIM 85000",
+      "expected": []
+    },
+    {
+      "id": "chatter-own",
+      "category": "negative-intent",
+      "query": "у меня iPhone17 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "chatter-review",
+      "category": "negative-intent",
+      "query": "обзор iPhone17 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "chatter-question",
+      "category": "negative-intent",
+      "query": "iPhone17 256 Black SIM хорошая камера?",
+      "expected": []
+    },
+    {
+      "id": "negated-buy",
+      "category": "negative-intent",
+      "query": "не нужен iPhone17 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "negated-color",
+      "category": "negative-intent",
+      "query": "ищу iPhone17 256 не черный SIM",
+      "expected": []
+    },
+    {
+      "id": "negated-brand",
+      "category": "negative-intent",
+      "query": "куплю не Xiaomi, iPhone17 256 Black SIM",
+      "expected": []
+    },
+    {
+      "id": "wrong-flag",
+      "category": "negative-region",
+      "query": "iPhone17 128 Black eSIM 🇨🇳",
+      "expected": []
+    },
+    {
+      "id": "unknown-region",
+      "category": "negative-region",
+      "query": "iPhone17 128 Black eSIM 🇩🇪",
+      "expected": []
+    },
+    {
+      "id": "sku-prefix",
+      "category": "negative-sku",
+      "query": "IP17-256-BK",
+      "expected": []
+    },
+    {
+      "id": "sku-unknown",
+      "category": "negative-sku",
+      "query": "RC-NOT-EXIST-1234",
+      "expected": []
+    },
+    {
+      "id": "sku-wrong-color",
+      "category": "negative-sku",
+      "query": "IP17-256-BK-SIM White",
+      "expected": []
+    },
+    {
+      "id": "sku-wrong-brand",
+      "category": "negative-sku",
+      "query": "IP17-256-BK-SIM Xiaomi",
+      "expected": []
+    },
+    {
+      "id": "sku-wrong-model",
+      "category": "negative-sku",
+      "query": "IP17-256-BK-SIM iPhone18",
+      "expected": []
+    },
+    {
+      "id": "sku-wrong-version",
+      "category": "negative-sku",
+      "query": "IP17-256-BK-SIM Pro",
+      "expected": []
+    },
+    {
+      "id": "sku-used-no-condition",
+      "category": "negative-sku",
+      "query": "IP17-USED",
+      "expected": []
+    },
+    {
+      "id": "sku-refurb-no-condition",
+      "category": "negative-sku",
+      "query": "IP17-REFURB",
+      "expected": []
+    },
+    {
+      "id": "sku-out-of-stock",
+      "category": "negative-stock",
+      "query": "IP17-OUT",
+      "expected": []
+    },
+    {
+      "id": "sku-wholesale",
+      "category": "negative-stock",
+      "query": "IP17-WHOLESALE",
+      "expected": []
+    },
+    {
+      "id": "sku-warning",
+      "category": "negative-stock",
+      "query": "IP17-WARN",
+      "expected": []
+    },
+    {
+      "id": "budget-low",
+      "category": "negative-budget",
+      "query": "Куплю iPhone17 256 Black до 999",
+      "expected": []
+    },
+    {
+      "id": "budget-no-price",
+      "category": "negative-budget",
+      "query": "Куплю iPhone17 64 Black SIM до 1000",
+      "expected": []
+    },
+    {
+      "id": "no-bare",
+      "category": "negative-intent",
+      "query": "iPhone17 256 Black SIM",
+      "expected": [],
+      "allow_bare": false
+    },
+    {
+      "id": "garmin-missing-size",
+      "category": "negative-unknown",
+      "query": "Garmin Fenix8 43mm Black",
+      "expected": []
+    },
+    {
+      "id": "oura-wrong-size",
+      "category": "negative-unknown",
+      "query": "Oura Ring4 Size 10 Black",
+      "expected": []
+    },
+    {
+      "id": "wrong-camera-generation",
+      "category": "negative-neighbor",
+      "query": "GoPro Hero11 Black",
+      "expected": []
+    },
+    {
+      "id": "wrong-console-version",
+      "category": "negative-neighbor",
+      "query": "Nintendo Switch Pro 256 Black",
+      "expected": []
+    },
+    {
+      "id": "wrong-glasses-generation",
+      "category": "negative-neighbor",
+      "query": "Meta RayBan Wayfarer Gen3 F Black L Green Size M",
+      "expected": []
+    },
+    {
+      "id": "wrong-nfc",
+      "category": "negative-unknown",
+      "query": "Xiaomi Redmi Note15 Pro 8/256 Blue NO NFC",
+      "expected": []
+    },
+    {
+      "id": "region-us",
+      "category": "region",
+      "query": "iPhone17 128 Black eSIM 🇺🇸",
+      "expected": [
+        "IP17-REG-US"
+      ]
+    },
+    {
+      "id": "region-cn",
+      "category": "region",
+      "query": "iPhone17 128 Black 2SIM 🇨🇳",
+      "expected": [
+        "IP17-REG-CN"
+      ]
+    },
+    {
+      "id": "region-jp",
+      "category": "region",
+      "query": "iPhone17 128 Black SIM+eSIM 🇯🇵",
+      "expected": [
+        "IP17-REG-JP"
+      ]
+    },
+    {
+      "id": "region-unspecified",
+      "category": "region",
+      "query": "iPhone17 128 Black eSIM",
+      "expected": [
+        "IP17-REG-US",
+        "IP17-REG-UNKNOWN"
+      ]
+    },
+    {
+      "id": "explicit-used",
+      "category": "condition",
+      "query": "iPhone17 256 Black SIM бу",
+      "expected": [
+        "IP17-USED"
+      ]
+    },
+    {
+      "id": "explicit-refurb",
+      "category": "condition",
+      "query": "iPhone17 256 Black SIM refurb",
+      "expected": [
+        "IP17-REFURB"
+      ]
+    },
+    {
+      "id": "explicit-damage",
+      "category": "condition",
+      "query": "iPhone17 256 Black SIM damaged",
+      "expected": [
+        "IP17-DAMAGED"
+      ]
+    },
+    {
+      "id": "explicit-case",
+      "category": "accessory",
+      "query": "чехол iPhone17 256 Black",
+      "expected": [
+        "IP17-CASE"
+      ]
+    },
+    {
+      "id": "explicit-glass",
+      "category": "accessory",
+      "query": "стекло iPhone17 Black",
+      "expected": [
+        "IP17-GLASS"
+      ]
+    },
+    {
+      "id": "sku-exact",
+      "category": "sku",
+      "query": "IP17-256-BK-DUAL",
+      "expected": [
+        "IP17-256-BK-DUAL"
+      ]
+    },
+    {
+      "id": "sku-accessory",
+      "category": "sku",
+      "query": "IP17-CASE",
+      "expected": [
+        "IP17-CASE"
+      ]
+    },
+    {
+      "id": "supplier-code",
+      "category": "sku",
+      "query": "RW4012",
+      "expected": [
+        "META-RB-G2-BK-GR"
+      ]
+    },
+    {
+      "id": "supplier-code-attrs",
+      "category": "sku",
+      "query": "RW4012 F Black L Green Size M",
+      "expected": [
+        "META-RB-G2-BK-GR"
+      ]
+    },
+    {
+      "id": "supplier-code-wrong",
+      "category": "negative-sku",
+      "query": "RW4012 F Green L Black Size M",
+      "expected": []
+    },
+    {
+      "id": "budget-exact",
+      "category": "budget",
+      "query": "Куплю iPhone17 256 Black SIM до 1000",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ]
+    },
+    {
+      "id": "buy-without-bare",
+      "category": "intent",
+      "query": "Куплю iPhone17 256 Black SIM",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ],
+      "allow_bare": false,
+      "classification": "buy"
+    },
+    {
+      "id": "bare-classification",
+      "category": "intent",
+      "query": "iPhone17 256 Black SIM",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ],
+      "classification": "bare"
+    },
+    {
+      "id": "multiline-family-isolation",
+      "category": "multiline",
+      "query": "Куплю\niPhone17 Pro Max 256 Blue SIM\nOnePlus15R 12/512 Mint Breeze\nHonor600 Lite 8/256 Gold\nSamsung Galaxy S26 Ultra 12/512 Black",
+      "expected": [
+        "IP17PM-256-BL-SIM",
+        "OP15R-12-512-MI",
+        "HON600L-8-256-GD",
+        "S26U-12-512-BK"
+      ],
+      "classification": "buy"
+    },
+    {
+      "id": "multiline-missing-rows",
+      "category": "multiline",
+      "query": "Предложите\niPhone17 2TB Green\nOnePlus15R 12/512 Mint Breeze\nHonor600 Lite 12/512 Black",
+      "expected": [
+        "OP15R-12-512-MI"
+      ]
+    },
+    {
+      "id": "multiline-no-attribute-bleed",
+      "category": "multiline",
+      "query": "Куплю\niPhone17 256 Green SIM\niPhone17 512 White SIM",
+      "expected": []
+    },
+    {
+      "id": "multiline-duplicate",
+      "category": "multiline",
+      "query": "Куплю\niPhone17 Pro Max 256 Blue SIM\niPhone17 Pro Max 256 Blue SIM",
+      "expected": [
+        "IP17PM-256-BL-SIM"
+      ]
+    },
+    {
+      "id": "multiline-sizes",
+      "category": "multiline",
+      "query": "Куплю\nMeta RayBan Wayfarer Gen2 F Black L Green\nРазмер M",
+      "expected": [
+        "META-RB-G2-BK-GR"
+      ]
+    },
+    {
+      "id": "iphone-absent-no-cross-brand-fallback",
+      "category": "negative-brand",
+      "query": "Куплю iPhone17 256 Black",
+      "catalog_skus": [
+        "XIA17-12-256-BK",
+        "RED17-8-256-BK",
+        "PIX17-12-256-BK"
+      ],
+      "expected": []
+    },
+    {
+      "id": "iphone-ru-absent-no-cross-brand-fallback",
+      "category": "negative-brand",
+      "query": "айфон17 256 черный",
+      "catalog_skus": [
+        "XIA17-12-256-BK",
+        "RED17-8-256-BK",
+        "PIX17-12-256-BK"
+      ],
+      "expected": []
+    },
+    {
+      "id": "iphone-out-no-cross-brand-fallback",
+      "category": "negative-brand",
+      "query": "Куплю Apple iPhone17 256 Black SIM",
+      "catalog_skus": [
+        "IP17-OUT",
+        "XIA17-12-256-BK",
+        "RED17-8-256-BK"
+      ],
+      "expected": []
+    },
+    {
+      "id": "sku-used-explicit-condition",
+      "category": "condition",
+      "query": "IP17-USED used",
+      "expected": [
+        "IP17-USED"
+      ]
+    },
+    {
+      "id": "sku-refurb-explicit-condition",
+      "category": "condition",
+      "query": "IP17-REFURB refurbished",
+      "expected": [
+        "IP17-REFURB"
+      ]
+    }
+  ],
+  "generated_groups": [
+    {
+      "id": "ip-base",
+      "category": "iphone",
+      "expected": [
+        "IP17-256-BK-SIM",
+        "IP17-256-BK-COMBO"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17",
+          "айфон 17",
+          "Apple iPhone 17"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB",
+          "256 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " SIM"
+        ]
+      ]
+    },
+    {
+      "id": "ip-pm",
+      "category": "variant",
+      "expected": [
+        "IP17PM-256-BK-SIM"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17 ProMax",
+          "айфон17 пм",
+          "iPhone 17 PM"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB",
+          "256 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " SIM"
+        ]
+      ]
+    },
+    {
+      "id": "ip-pro",
+      "category": "variant",
+      "expected": [
+        "IP17P-256-BK-SIM"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17 Pro",
+          "айфон 17 про"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB",
+          "256 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " SIM"
+        ]
+      ]
+    },
+    {
+      "id": "ip-esim",
+      "category": "sim",
+      "expected": [
+        "IP17-256-BK-ESIM"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17",
+          "айфон 17"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB",
+          "256 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " eSIM"
+        ]
+      ]
+    },
+    {
+      "id": "ip-dual",
+      "category": "sim",
+      "expected": [
+        "IP17-256-BK-DUAL"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17",
+          "айфон 17"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB",
+          "256 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " 2sim"
+        ]
+      ]
+    },
+    {
+      "id": "ipad",
+      "category": "ipad",
+      "expected": [
+        "IPAD11-128-WIFI"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPad11",
+          "айпад 11"
+        ],
+        [
+          " "
+        ],
+        [
+          "128",
+          "128GB",
+          "128 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "Silver",
+          "серебристый"
+        ],
+        [
+          " Wi-Fi"
+        ]
+      ]
+    },
+    {
+      "id": "s26ultra",
+      "category": "samsung",
+      "expected": [
+        "S26U-12-512-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Samsung Galaxy S26 Ultra",
+          "самсунг с26 ультра",
+          "сасунг с26 ультра"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/512",
+          "12/512GB",
+          "12 RAM 512GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "s26base",
+      "category": "samsung",
+      "expected": [
+        "S26-12-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Samsung S26",
+          "самсунг с26"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB",
+          "12 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "s26plus",
+      "category": "samsung",
+      "expected": [
+        "S26PLUS-12-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Galaxy S26+",
+          "самсунг с26 плюс"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "a57",
+      "category": "samsung",
+      "expected": [
+        "A57-8-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Samsung Galaxy A57",
+          "самсунг а57"
+        ],
+        [
+          " "
+        ],
+        [
+          "8/256",
+          "8/256GB",
+          "8 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "op15",
+      "category": "oneplus",
+      "expected": [
+        "OP15-12-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "OnePlus15",
+          "ванплас 15"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB",
+          "12 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Infinite Black"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "op15r",
+      "category": "oneplus",
+      "expected": [
+        "OP15R-12-256-MI"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "OnePlus15R",
+          "ванплас 15r"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB",
+          "12 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Mint Breeze"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "hon-lite",
+      "category": "honor",
+      "expected": [
+        "HON600L-8-256-GD"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Honor600 Lite",
+          "хонор 600 лайт"
+        ],
+        [
+          " "
+        ],
+        [
+          "8/256",
+          "8/256GB",
+          "8 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Gold",
+          "золотой"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "hon-pro",
+      "category": "honor",
+      "expected": [
+        "HON600P-12-512-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Honor600 Pro",
+          "хонор 600 про"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/512",
+          "12/512GB",
+          "12 RAM 512GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "xia17",
+      "category": "xiaomi",
+      "expected": [
+        "XIA17-12-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Xiaomi17",
+          "сяоми 17",
+          "ксиаоми 17"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB",
+          "12 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "red17",
+      "category": "redmi",
+      "expected": [
+        "RED17-8-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Redmi17",
+          "редми 17"
+        ],
+        [
+          " "
+        ],
+        [
+          "8/256",
+          "8/256GB",
+          "8 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "rednote",
+      "category": "redmi",
+      "expected": [
+        "REDN15-8-256-BL-NFC"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Redmi Note15",
+          "редми note 15"
+        ],
+        [
+          " "
+        ],
+        [
+          "8/256",
+          "8/256GB",
+          "8 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Blue",
+          "синий"
+        ],
+        [
+          " NFC"
+        ]
+      ]
+    },
+    {
+      "id": "poco",
+      "category": "poco",
+      "expected": [
+        "POCOF7-12-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "POCO F7",
+          "поко f7"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB",
+          "12 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "pixel",
+      "category": "pixel",
+      "expected": [
+        "PIX11P-16-256-OB"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Pixel11 Pro",
+          "пиксель 11 про"
+        ],
+        [
+          " "
+        ],
+        [
+          "16/256",
+          "16/256GB",
+          "16 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Obsidian"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "vivo",
+      "category": "vivo",
+      "expected": [
+        "VIVOX300-12-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Vivo X300",
+          "виво x300"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB",
+          "12 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "realme",
+      "category": "realme",
+      "expected": [
+        "REALGT8-12-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Realme GT8",
+          "реалми gt8"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB",
+          "12 RAM 256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "nothing",
+      "category": "nothing",
+      "expected": [
+        "NOTH3-16-512-WH"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Nothing Phone3",
+          "насинг phone3"
+        ],
+        [
+          " "
+        ],
+        [
+          "16/512",
+          "16/512GB",
+          "16 RAM 512GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "White",
+          "белый"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "switch",
+      "category": "console",
+      "expected": [
+        "SWITCH2-256-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Nintendo Switch2",
+          "нинтендо свитч 2"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB",
+          "256 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "ps5",
+      "category": "console",
+      "expected": [
+        "PS5-SLIM-DISC"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Sony PlayStation 5 Slim Disc",
+          "Sony PS5 Slim Disc"
+        ],
+        [
+          " "
+        ],
+        [
+          "1TB",
+          "1024GB",
+          "1 тб"
+        ],
+        [
+          " "
+        ],
+        [
+          "White",
+          "белый"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "quest",
+      "category": "vr",
+      "expected": [
+        "META-QUEST3-512"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Meta Quest3",
+          "мета quest3"
+        ],
+        [
+          " "
+        ],
+        [
+          "512",
+          "512GB",
+          "512 гб"
+        ],
+        [
+          " "
+        ],
+        [
+          "White",
+          "белый"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "sony",
+      "category": "audio",
+      "expected": [
+        "WHXM6-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Sony WH1000XM6",
+          "сони wh1000xm6"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ]
+      ]
+    },
+    {
+      "id": "dji-action",
+      "category": "camera",
+      "expected": [
+        "DJI-OA5P"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "DJI Osmo Action5 Pro",
+          "ди джи ай osmo action5 pro"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ]
+      ]
+    },
+    {
+      "id": "insta",
+      "category": "camera",
+      "expected": [
+        "INSTA-X5"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Insta360 X5",
+          "инста360 x5"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ]
+      ]
+    },
+    {
+      "id": "gopro",
+      "category": "camera",
+      "expected": [
+        "GOPRO-H13"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "GoPro Hero13",
+          "гоупро hero13"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ]
+      ]
+    },
+    {
+      "id": "garmin",
+      "category": "wearable",
+      "expected": [
+        "GAR-F8-47"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Garmin Fenix8 47mm",
+          "гармин fenix8 47mm"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ]
+      ]
+    },
+    {
+      "id": "coros",
+      "category": "wearable",
+      "expected": [
+        "COROS-P3"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Coros Pace3",
+          "корос pace3"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ]
+      ]
+    },
+    {
+      "id": "oura",
+      "category": "wearable",
+      "expected": [
+        "OURA4-S8-BK"
+      ],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Oura Ring4 Size 8",
+          "оура ring4 размер 8"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ]
+      ]
+    },
+    {
+      "id": "iphone-ram-brand",
+      "category": "negative-brand",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17",
+          "айфон 17"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "oneplus-no-r",
+      "category": "negative-neighbor",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "OnePlus15",
+          "ванплас15"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/512",
+          "12/512GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Mint Breeze"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "honor-no-lite",
+      "category": "negative-neighbor",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Honor600",
+          "хонор600"
+        ],
+        [
+          " "
+        ],
+        [
+          "8/256",
+          "8/256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Gold",
+          "золотой"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "samsung-wrong-memory",
+      "category": "negative-unknown",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Samsung S26 Ultra",
+          "самсунг с26 ультра"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/128",
+          "12/128GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "pixel-no-black",
+      "category": "negative-color",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Pixel11 Pro",
+          "пиксель11 про"
+        ],
+        [
+          " "
+        ],
+        [
+          "16/256",
+          "16/256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "mint-no-green",
+      "category": "negative-color",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "OnePlus15R",
+          "ванплас15r"
+        ],
+        [
+          " "
+        ],
+        [
+          "12/256",
+          "12/256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Green",
+          "зеленый"
+        ],
+        [
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "wrong-iphone-memory",
+      "category": "negative-unknown",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17",
+          "айфон17"
+        ],
+        [
+          " "
+        ],
+        [
+          "2TB",
+          "2048GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " SIM"
+        ]
+      ]
+    },
+    {
+      "id": "conflict-colors",
+      "category": "negative-conflict",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17",
+          "айфон17"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black White",
+          "черный белый"
+        ],
+        [
+          " SIM"
+        ]
+      ]
+    },
+    {
+      "id": "wrong-iphone-sim",
+      "category": "negative-conflict",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "iPhone17",
+          "айфон17"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " SIM eSIM"
+        ]
+      ]
+    },
+    {
+      "id": "seller-iphone",
+      "category": "negative-intent",
+      "expected": [],
+      "parts": [
+        [
+          "",
+          "Куплю ",
+          "Нужен "
+        ],
+        [
+          "Продам iPhone17",
+          "Продаю айфон17"
+        ],
+        [
+          " "
+        ],
+        [
+          "256",
+          "256GB"
+        ],
+        [
+          " "
+        ],
+        [
+          "Black",
+          "черный"
+        ],
+        [
+          " SIM"
+        ]
+      ]
+    }
+  ]
+}

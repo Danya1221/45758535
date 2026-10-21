@@ -35,11 +35,26 @@ class InstanceLock:
 
 def main():
     parser = argparse.ArgumentParser(description='Отдельный Telegram-бот для ответов по наличию')
-    parser.add_argument('command', choices=['login', 'session-env', 'run', 'demo', 'check-catalog', 'check-price'])
+    parser.add_argument('command', choices=['login', 'session-env', 'run', 'demo', 'check-catalog', 'check-price', 'check-recognition'])
     parser.add_argument('file', nargs='?')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s: %(message)s')
     try:
+        if args.command == 'check-recognition':
+            from .recognition_check import run_checks
+            result = run_checks(Path(args.file) if args.file else None)
+            print(f'Распознавание: {result.passed}/{result.total} сценариев прошли.')
+            for source, counts in sorted(result.sources.items()):
+                print(f'  {source}: {counts.passed}/{counts.total}')
+            for failure in result.failures[:10]:
+                print(f'\nОшибка {failure.case_id}: {failure.query!r}')
+                print('  Ожидалось: ' + (', '.join(failure.expected) or 'пропуск'))
+                print('  Получено: ' + (', '.join(failure.actual) or 'пропуск'))
+                if failure.expected_classification is not None:
+                    print(f'  Тип сообщения: {failure.actual_classification}; ожидался {failure.expected_classification}')
+            if result.failures:
+                parser.exit(1, f'Не прошли: {len(result.failures)}. Исправь распознавание перед запуском.\n')
+            return
         if args.command == 'check-price':
             from .prices import parse_price_feed
             if not args.file:

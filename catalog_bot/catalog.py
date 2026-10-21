@@ -9,50 +9,14 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 
 
-COLORS = {
-    "black": ("black", "черный", "черная", "черное", "черн"),
-    "white": ("white", "белый", "белая", "белое"),
-    "silver": ("silver", "серебристый", "серебристая", "серебро"),
-    "gray": ("gray", "grey", "серый", "серая"),
-    "blue": ("blue", "синий", "синяя", "голубой", "голубая"),
-    "navy": ("navy", "темно синий", "темно-синий"),
-    "green": ("green", "зеленый", "зеленая"),
-    "purple": ("purple", "фиолетовый", "фиолетовая"),
-    "lilac": ("lilac", "сиреневый", "сиреневая"),
-    "lavender": ("lavender", "лавандовый", "лавандовая"),
-    "yellow": ("yellow", "желтый", "желтая"),
-    "orange": ("orange", "оранжевый", "оранжевая"),
-    "red": ("red", "красный", "красная"),
-    "pink": ("pink", "розовый", "розовая"),
-    "gold": ("gold", "золотой", "золотая", "золото"),
-    "burgundy": ("burgundy", "бордовый", "бордовая"),
-    "glacier": ("glacier", "глейсер", "глейшер"),
-    "natural": ("natural", "натуральный", "натуральная"),
-}
-ALIASES = {
-    "айфон": "iphone", "айфона": "iphone", "айфоны": "iphone",
-    "ифон": "iphone", "апл": "apple", "эпл": "apple",
-    "айпад": "ipad", "айпэд": "ipad", "айпада": "ipad",
-    "самсунг": "samsung", "сасунг": "samsung", "галакси": "galaxy",
-    "сяоми": "xiaomi", "ксиаоми": "xiaomi", "редми": "redmi",
-    "пиксель": "pixel", "гугл": "google",
-    "маршал": "marshall", "маршалл": "marshall",
-    "эмбертон": "emberton", "райбан": "rayban", "ray ban": "rayban",
-    "ray-ban": "rayban", "про": "pro", "макс": "max",
-    "плюс": "plus", "ультра": "ultra", "мини": "mini",
-    "е сим": "esim", "е-сим": "esim", "еsim": "esim",
-    "есим": "esim", "сим": "sim", "e-sim": "esim",
-    "фотохром": "photochromic", "фотохромные": "photochromic",
-    "новый": "new", "новая": "new", "новые": "new",
-    "б/у": "used", "бу": "used", "б у": "used",
-    "восстановленный": "refurbished", "реф": "refurbished",
-    "refurb": "refurbished", "ref": "refurbished", "б.у.": "used",
-}
+from .lexicon import ALIASES, BRAND_OWNERS, COLORS, normalize_text, normalize_with_notes
+
+
 VARIANTS = frozenset("pro max plus ultra mini lite air edge se xl fold fe".split())
 FILLER = frozenset(
     "куплю купим ищу ищем нужен нужна нужно нужны интересует возьму предложите "
-    "предлагайте пожалуйста у кого есть кто продаст wtb apple samsung galaxy "
-    "google телефон смартфон колонка очки размер size цвет color память storage "
+    "предлагайте пожалуйста у кого есть кто продаст wtb "
+    "телефон смартфон колонка очки размер size цвет color память storage "
     "gb гб tb тб ram озу sim esim dual nano нано и или or gen поколение "
     "wi fi wifi cellular a brand new бюджет до за руб р rub в наличии".split()
 )
@@ -64,21 +28,7 @@ MONEY = re.compile(r"\d\s*(?:₽|руб\b|rub\b|р\.)", re.I)
 
 @lru_cache(maxsize=4096)
 def normalize(value: str) -> str:
-    value = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
-    value = re.sub(r"\b(айфон|ифон|айпад|айпэд)(?=\d)", r"\1 ", value)
-    for source, target in sorted(ALIASES.items(), key=lambda pair: -len(pair[0])):
-        value = re.sub(r"(?<!\w)" + re.escape(source) + r"(?!\w)", target, value)
-    if re.search(r"\b(?:samsung|galaxy)\b", value):
-        # Russian spellings of Samsung S/A series; never change the model number.
-        value = re.sub(r"\b([са])(?=\d{2}[a-z]?\b)",
-                       lambda match: {'с': 's', 'а': 'a'}[match[1]], value)
-    value = re.sub(r"\b(iphone|ipad|phone)\s*(?=\d)", r"\1 ", value)
-    value = re.sub(r"\b(gen|watch|flip|fold)(?=\d)", r"\1 ", value)
-    value = re.sub(r"\b(\d{1,2})\s*pm\b", r"\1 pro max", value)
-    value = re.sub(r"\b([sa]\d{2})\s*\+", r"\1 plus", value)
-    value = re.sub(r"\b(\d+)\s*(?:тб|tb)\b", r"\1tb", value)
-    value = re.sub(r"\b(\d+)\s*(?:гб|gb)\b", r"\1gb", value)
-    return re.sub(r"\s+", " ", value).strip()
+    return normalize_text(value)
 
 
 def words(value: str) -> list[str]:
@@ -86,7 +36,53 @@ def words(value: str) -> list[str]:
 
 
 def code_key(value: str) -> str:
-    return re.sub(r"[^a-zа-я0-9]", "", normalize(value))
+    # Supplier identifiers are opaque: BK/BLACK, PM/ProMax and C/С stay
+    # distinct. Only letter case, compatibility forms and separators normalize.
+    value = unicodedata.normalize('NFKC', value).casefold()
+    return re.sub(r"[^a-zа-яё0-9]", "", value)
+
+
+IDENTIFIER_TOKEN = re.compile(r'[\w]+(?:[-/][\w]+)*')
+
+
+def identifier_specification(token: str) -> str:
+    """Keep explicit natural device identity when a SKU happens to collide.
+
+    A code like IP17-USED is opaque. A canonical brand by itself or a natural
+    form like iPhone17/Samsung-S26 cannot erase the requested manufacturer.
+    Attribute words encoded in the rest of an ID are not user requirements.
+    """
+    normalized = normalize(token)
+    if normalized in BRAND_OWNERS:
+        return normalized
+    brand_pattern = '|'.join(re.escape(brand) for brand in sorted(BRAND_OWNERS, key=len, reverse=True))
+    natural = re.match(r'^(?:(' + brand_pattern + r'))[\s\-/]+([a-zа-яё]*\d+[a-zа-яё0-9]*)\b', normalized)
+    if not natural:
+        return ' '
+    suffix = normalized[natural.end():].strip(' -/')
+    versions = []
+    for word in suffix.split():
+        if word not in VARIANTS:
+            break
+        versions.append(word)
+    return ' '.join((natural[1], natural[2], *versions))
+
+
+def semantic_reference(token: str) -> bool:
+    """A natural attribute/model word has priority over a coincident SKU."""
+    normalized = normalize(token)
+    tokens = set(words(normalized))
+    semantic_words = (set(FILLER) | set(VARIANTS) | set(COLORS) | set(BRAND_OWNERS)
+                      | {'nfc', 'no', 'new', 'used', 'refurbished', 'lte', 'pm', 'пм'})
+    if tokens and tokens.issubset(semantic_words):
+        return True
+    if re.fullmatch(r'\d+(?:gb|tb)?', normalized):
+        return True
+    if re.fullmatch(r'(?:[sa]\d{2}[a-z]{0,2}|x\d{2,4}[a-z]?|gt\d{1,2}[a-z]?|\d{1,3}[a-z]{0,2})', normalized):
+        return True
+    if re.fullmatch(r'\d+\s*(?:sim|esim)', normalized):
+        return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -108,6 +104,34 @@ class Spec:
     connectivity: str | None = None
     issues: tuple[str, ...] = ()
     role_colors: frozenset[tuple[str, str]] = frozenset()
+    brand: str | None = None
+    product_line: str | None = None
+
+
+# Family labels identify devices; in an accessory title they describe compatibility,
+# not the manufacturer of the accessory. Explicit manufacturer words stay distinct.
+COMPATIBILITY_FAMILIES = frozenset({'iphone', 'ipad', 'macbook', 'airpods', 'galaxy', 'pixel'})
+
+
+def entity_text(text: str) -> str:
+    return re.split(r'\b(?:для|for|compatible)\b', text, maxsplit=1)[0]
+
+
+def identity(text: str, category: str) -> tuple[str | None, list[str]]:
+    tokens = set(words(entity_text(text)))
+    if category != 'device':
+        tokens -= COMPATIBILITY_FAMILIES
+    owners = {BRAND_OWNERS[token] for token in tokens if token in BRAND_OWNERS}
+    # Meta makes both families; Ray-Ban and Oakley remain distinct identities.
+    if 'meta' in owners and owners.intersection({'rayban', 'oakley'}):
+        owners.remove('meta')
+    # This complete combined label exists in the supplied catalog. The Fitbit
+    # family stays explicit instead of becoming any Google-branded device.
+    if {'google', 'fitbit'}.issubset(owners):
+        owners.remove('google')
+    if len(owners) > 1:
+        return None, ['несовместимые бренды в одной строке: ' + ', '.join(sorted(owners))]
+    return next(iter(owners), None), []
 
 
 @lru_cache(maxsize=4096)
@@ -117,13 +141,27 @@ def parse_spec(text: str) -> Spec:
     # Structured attributes are removed from model identity, never discarded.
     n = re.sub(r"\b(note|pixel|magic)(?=\d)", r"\1 ", n)
     tokens = set(words(n))
-    category_text = re.sub(r'\b(?:aluminum|aluminium|steel|titanium)\s+case\b', '', n) if 'watch' in tokens else n
+    category_text = n
+    watch_body = ('watch' in words(entity_text(n))
+                  and not re.search(r'\b(?:protective|cover|чехол\w*)\b', n)
+                  and re.search(r'\b(?:aluminum|aluminium|steel|titanium|active\s+band)\b', n))
+    if watch_body:
+        category_text = re.sub(r'\bcase\b', '', n)
     category = next((kind for kind, pattern in (
         ('case', r'\b(?:чехол\w*|case|cover)\b'),
         ('protector', r'\b(?:стекло|пленка|protector)\b'),
         ('charger', r'\b(?:заряд\w*|charger|кабель|cable)\b'),
         ('parts', r'\b(?:дисплей|экран|аккумулятор|запчаст\w*|replacement)\b'),
     ) if re.search(pattern, category_text)), 'device')
+    brand, issues = identity(n, category)
+    core = entity_text(n)
+    core_tokens = set(words(core))
+    product_line = None
+    if category == 'device' and brand == 'xiaomi':
+        subbrands = core_tokens.intersection({'redmi', 'poco'})
+        if len(subbrands) > 1:
+            issues.append('несовместимые линейки устройств в одной строке')
+        product_line = next(iter(subbrands), 'xiaomi')
     nfc = False if re.search(r'\b(?:no|без)\s+nfc\b', n) else (True if 'nfc' in tokens else None)
     connectivity = 'cellular' if re.search(r'\b(?:cellular|lte)\b', n) else ('wifi' if re.search(r'\bwi[ -]?fi\b', n) else None)
     n = re.sub(r'\b(?:(?:no|без)\s+)?nfc\b|\b(?:cellular|lte|wi[ -]?fi)\b', ' ', n)
@@ -169,23 +207,32 @@ def parse_spec(text: str) -> Spec:
     variant = tokens & VARIANTS
     family = "generic"
     model: set[str] = set()
-    iphone = re.search(r"\biphone\s+(\d{1,2})\b", n)
-    short_iphone = re.search(r"^\s*(\d{1,2})\b", n)
+    iphone = re.search(r"\biphone\s+(\d{1,2})\b", core) if category == 'device' else None
+    short_iphone = re.search(r"^\s*(\d{1,2})\b", core) if category == 'device' else None
     if iphone:
         family, model = "iphone", {iphone[1]}
     elif short_iphone and (variant or storage) and 6 <= int(short_iphone[1]) <= 30:
         family, model = "iphone", {short_iphone[1]}
-    elif "iphone" in tokens:
+    elif "iphone" in core_tokens and category == 'device':
         family = "iphone"
     else:
-        not_samsung_phone = re.search(r'\b(?:galaxy|samsung)\s+(?:tab|watch|buds|ring|book)\b', n) or bool(
+        not_samsung_phone = category != 'device' or brand not in {None, 'samsung'} or re.search(r'\b(?:galaxy|samsung)\s+(?:tab|watch|buds|ring|book)\b', core) or bool(
             tokens & {'rayban', 'meta', 'oakley', 'sony', 'gopro', 'instax', 'fujifilm', 'garmin', 'coros', 'oura'})
-        samsung = None if not_samsung_phone else re.search(r"\b([sa]\d{2}[a-z]?)\b", n)
-        numbered = re.search(r"\b(ipad|pixel)\s+(\d{1,2})\b", n)
+        samsung = None if not_samsung_phone else re.search(r"\b([sa]\d{2}[a-z]?)\b", core)
+        numbered = re.search(r"\b(ipad|pixel)\s+(\d{1,2})\b", core) if category == 'device' else None
         if samsung:
             family, model = "samsung", {samsung[1]}
         elif numbered:
             family, model = numbered[1], {numbered[2]}
+    family_brand = {'iphone': 'apple', 'ipad': 'apple', 'pixel': 'google', 'samsung': 'samsung'}.get(family)
+    if family_brand:
+        if brand is not None and brand != family_brand:
+            issues.append('бренд противоречит семейству модели')
+        elif not any('бренд' in issue for issue in issues):
+            brand = family_brand
+    device_families = core_tokens.intersection(COMPATIBILITY_FAMILIES - {'galaxy'})
+    if category == 'device' and len(device_families) > 1:
+        issues.append('несколько семейств устройств в одной строке')
     cleaned = re.sub(r"\b\d{1,4}(?:gb|tb)\b", " ", n)
     cleaned = re.sub(r"\b\d{1,2}\s*/\s*\d{1,4}\b", " ", cleaned)
     cleaned = re.sub(r"\b(?:размер|size)\s+[xsml]{1,3}\b", " ", cleaned)
@@ -195,9 +242,13 @@ def parse_spec(text: str) -> Spec:
         if t not in FILLER and t not in VARIANTS and t not in {str(s) for s in storage}
         and (ram is None or t != str(ram))
         and t not in {"new", "used", "refurbished"}
+        and not (t in BRAND_OWNERS and t == BRAND_OWNERS[t])
+        and t != "galaxy"
     }
     if sim == "dual_sim":
         traits.discard("2")
+    if re.search(r"\b1\s*sim\b", n):
+        traits.discard("1")
     if family == "generic":
         model = traits
         if "rayban" in model:
@@ -213,7 +264,10 @@ def parse_spec(text: str) -> Spec:
     max_price = Decimal(budget[1].replace(" ", "")) if budget else None
     if re.search(r'\b(?:мят\w*|дефект\w*|витрин\w*|уцен\w*|поврежд\w*|damaged|open box|demo|renewed)\b', n):
         condition = 'damaged'
-    issues = []
+    if re.search(r"\s[-–—]\s*\d+\s*$", normalize(text)):
+        issues.append("неясное число после дефиса; количество нужно указывать с «шт»")
+    if len(tokens.intersection({"new", "used", "refurbished"})) > 1:
+        issues.append("противоречивые требования к состоянию")
     if len(storage) > 1 and not re.search(r'\b\d+(?:gb|tb)?\s+(?:или|or)\s+\d+(?:gb|tb)?\b', n):
         issues.append('несколько значений памяти без «или»')
     # More than one explicit model on one line is unsafe to distribute attributes over.
@@ -226,9 +280,11 @@ def parse_spec(text: str) -> Spec:
         issues.append('несколько значений RAM')
     if 'sim' in tokens and 'esim' in tokens and sim != 'sim_esim':
         issues.append('неясная комбинация SIM: укажите SIM+eSIM или одну версию')
+    if re.search(r'\b1\s*sim\b', n) and re.search(r'\b(?:2\s*sim|dual\s*sim|две\s*sim)\b', n):
+        issues.append('противоречивые требования к числу SIM')
     return Spec(family, frozenset(model), frozenset(variant), frozenset(storage), ram,
                 frozenset(colors), sim, condition, size_match[1] if size_match else None, frozenset(traits),
-                bool(re.search(r'\b(?:' + '|'.join(re.escape(a) for values in COLORS.values() for a in values) + r')\s+(?:или|or)\s+(?:' + '|'.join(re.escape(a) for values in COLORS.values() for a in values) + r')\b', normalize(text))), max_price, category, nfc, connectivity, tuple(issues), frozenset(role_colors))
+                bool(re.search(r'\b(?:' + '|'.join(re.escape(a) for values in COLORS.values() for a in values) + r')\s+(?:или|or)\s+(?:' + '|'.join(re.escape(a) for values in COLORS.values() for a in values) + r')\b', normalize(text))), max_price, category, nfc, connectivity, tuple(issues), frozenset(role_colors), brand, product_line)
 
 
 def intent(text: str, allow_bare: bool) -> str:
@@ -390,6 +446,8 @@ def colors_match(request: Spec, item: Spec) -> bool:
 def attribute_reason(request: Spec, item: Spec) -> str | None:
     checks = (
         (bool(item.issues), 'неоднозначные характеристики в прайсе'),
+        (request.brand is not None and request.brand != item.brand, 'бренд'),
+        (request.product_line is not None and request.product_line != item.product_line, 'линейка устройств'),
         (not request.role_colors.issubset(item.role_colors), 'цвет оправы / линз'),
         (request.category != item.category, 'категория товара'),
         (request.storage and not request.storage.intersection(item.storage), 'память'),
@@ -406,6 +464,10 @@ def attribute_reason(request: Spec, item: Spec) -> str | None:
 
 
 def model_reason(request: Spec, item: Spec) -> str | None:
+    if request.brand is not None and request.brand != item.brand:
+        return 'бренд'
+    if request.product_line is not None and request.product_line != item.product_line:
+        return 'линейка устройств'
     if not request.model or request.family != item.family:
         return 'модель'
     if request.family == 'generic':
@@ -442,6 +504,10 @@ def describe_spec(spec: Spec) -> str:
                 if v in spec.variants]
     model = ' '.join(filter(None, [family, *sorted(spec.model), *versions]))
     parts = ['модель: ' + (model or 'не распознана')]
+    if spec.brand:
+        parts.append('бренд: ' + spec.brand)
+    if spec.product_line and spec.product_line != spec.brand:
+        parts.append('линейка: ' + spec.product_line)
     storage = '/'.join(map(str, sorted(spec.storage))) + ' ГБ' if spec.storage else ''
     sim = {'sim': 'SIM', 'esim': 'eSIM', 'sim_esim': 'SIM+eSIM', 'dual_sim': '2 SIM'}.get(spec.sim)
     for label, value in (('память', storage), ('RAM', f'{spec.ram} ГБ' if spec.ram is not None else ''),
@@ -458,10 +524,11 @@ def describe_spec(spec: Spec) -> str:
 
 def product_identifiers(product: Product) -> dict[str, set[str]]:
     """Only complete supplier codes; never treat model generations or memory as SKUs."""
-    identifiers = {code_key(product.sku): set(words(product.sku))} if product.sku else {}
-    for token in re.findall(r'[a-z0-9]+(?:-[a-z0-9]+)*', normalize(product.name)):
+    identifiers = {code_key(product.sku): set(re.findall(r'[a-zа-яё0-9]+', product.sku.casefold()))} if product.sku else {}
+    raw_name = unicodedata.normalize('NFKC', product.name).casefold()
+    for token in re.findall(r'[a-z0-9]+(?:[-/][a-z0-9]+)*', raw_name):
         if re.match(r'[a-z]{2,}', token) and re.search(r'\d{3,}', token):
-            identifiers[code_key(token)] = set(words(token))
+            identifiers[code_key(token)] = set(re.findall(r'[a-z0-9]+', token))
     return identifiers
 
 
@@ -471,16 +538,26 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
     if classification not in {'buy', 'bare'}:
         report.details.append('Нет однозначного запроса на покупку; ответ отключён.')
         return report
+    identifiers = {p: product_identifiers(p) for p in products}
     for segment in request_segments(text):
-        clean = BUY.sub(' ', normalize(segment)).strip(' :,-')
-        request = parse_spec(clean)
-        request_words = {code_key(t) for t in re.findall(r'[\w-]+', clean)}
-        identifiers = {p: product_identifiers(p) for p in products}
+        request_words = {code_key(token) for token in IDENTIFIER_TOKEN.findall(segment)
+                         if not semantic_reference(token)}
         requested_skus = {code for codes in identifiers.values() for code in codes if code in request_words}
+        # Attributes encoded inside a supplier ID are not an explicit request
+        # for that condition, brand, color or version. Words next to it remain.
+        specification_text = IDENTIFIER_TOKEN.sub(
+            lambda match: identifier_specification(match[0]) if code_key(match[0]) in requested_skus else match[0], segment)
+        normalized, normalization_notes = normalize_with_notes(specification_text)
+        clean = BUY.sub(' ', normalized).strip(' :,-')
+        if normalization_notes:
+            report.details.append('Нормализация: ' + '; '.join(normalization_notes))
+        request = parse_spec(clean)
+        if requested_skus:
+            report.details.append('Точный артикул: ' + ', '.join(sorted(requested_skus)))
         report.details.append(describe_spec(request))
         issues = list(request.issues)
         # A brand, category or series alone cannot identify a concrete product.
-        named_model = len(request.model) >= 2 and any(
+        named_model = (len(request.model) >= 2 or (request.brand is not None and bool(request.model))) and any(
             request.model == parse_spec(p.name).model and request.variants == parse_spec(p.name).variants
             for p in products)
         if not requested_skus and (not request.model or (request.family == 'generic' and not named_model and not any(
@@ -492,7 +569,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
                 item = parse_spec(product.name)
                 same_number = any(number in re.findall(r'\d+', token) for token in item.model)
                 if (product.eligible and item.family != 'iphone' and same_number
-                        and request.variants == item.variants and not attribute_reason(request, item)
+                        and request.variants == item.variants and not attribute_reason(replace(request, brand=None), item)
                         and request.traits.issubset(item.traits | item.model)
                         and (request.max_price is None or (product.price is not None and product.price <= request.max_price))):
                     issues.append('короткая модель подходит разным семействам; укажите iPhone или другое название')
@@ -501,7 +578,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
             report.details.append('Пропущено: ' + '; '.join(issues))
             continue
         rejected: dict[str, int] = {}
-        count = 0
+        candidates: list[Product] = []
         for product in products:
             item = parse_spec(product.name)
             matched_codes = requested_skus.intersection(identifiers[product])
@@ -513,8 +590,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
                 if request.family != 'generic':
                     reason = model_reason(request, item)
                 else:
-                    code_words = set().union(*(identifiers[product][code] for code in matched_codes))
-                    extra = request.model - code_words
+                    extra = request.model
                     if not extra.issubset(item.model | item.traits | {item.family}):
                         reason = 'признаки рядом с артикулом'
                     elif request.variants and request.variants != item.variants:
@@ -540,10 +616,15 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
             if reason:
                 rejected[reason] = rejected.get(reason, 0) + 1
                 continue
-            count += 1
+            candidates.append(product)
+        candidate_identities = {(parse_spec(p.name).brand, parse_spec(p.name).product_line) for p in candidates}
+        if request.category == 'device' and request.brand is None and len(candidate_identities) > 1:
+            report.details.append('Пропущено: название подходит нескольким брендам; укажите бренд.')
+            candidates = []
+        for product in candidates:
             if product not in report.products:
                 report.products.append(product)
-        report.details.append(f'Подходящих позиций: {count}.')
+        report.details.append(f'Подходящих позиций: {len(candidates)}.')
         if rejected:
             report.details.append('Отсеяно: ' + ', '.join(f'{k} — {v}' for k, v in rejected.items()))
     return report
