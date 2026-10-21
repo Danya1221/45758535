@@ -33,7 +33,7 @@ ALIASES = {
     "айфон": "iphone", "айфона": "iphone", "айфоны": "iphone",
     "ифон": "iphone", "апл": "apple", "эпл": "apple",
     "айпад": "ipad", "айпэд": "ipad", "айпада": "ipad",
-    "самсунг": "samsung", "галакси": "galaxy",
+    "самсунг": "samsung", "сасунг": "samsung", "галакси": "galaxy",
     "сяоми": "xiaomi", "ксиаоми": "xiaomi", "редми": "redmi",
     "пиксель": "pixel", "гугл": "google",
     "маршал": "marshall", "маршалл": "marshall",
@@ -68,6 +68,10 @@ def normalize(value: str) -> str:
     value = re.sub(r"\b(айфон|ифон|айпад|айпэд)(?=\d)", r"\1 ", value)
     for source, target in sorted(ALIASES.items(), key=lambda pair: -len(pair[0])):
         value = re.sub(r"(?<!\w)" + re.escape(source) + r"(?!\w)", target, value)
+    if re.search(r"\b(?:samsung|galaxy)\b", value):
+        # Russian spellings of Samsung S/A series; never change the model number.
+        value = re.sub(r"\b([са])(?=\d{2}[a-z]?\b)",
+                       lambda match: {'с': 's', 'а': 'a'}[match[1]], value)
     value = re.sub(r"\b(iphone|ipad|phone)\s*(?=\d)", r"\1 ", value)
     value = re.sub(r"\b(gen|watch|flip|fold)(?=\d)", r"\1 ", value)
     value = re.sub(r"\b(\d{1,2})\s*pm\b", r"\1 pro max", value)

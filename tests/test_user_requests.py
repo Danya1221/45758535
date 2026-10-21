@@ -48,3 +48,20 @@ class UserRequestTests(unittest.TestCase):
         self.assert_samsung_quote(find_products('Куплю\n' + USER_REQUEST, self.products, allow_bare=False)[1])
         self.assertEqual(find_products(USER_REQUEST + '\nПродам iPhone 17', self.products)[1], [])
         self.assertEqual(find_products(' '.join(USER_REQUEST.splitlines()), self.products)[1], [])
+
+    def test_user_samsung_typo_and_cyrillic_series_quote_same_price(self):
+        for query in ('сасунг с26 ультра 512 черный', 'Самсунг С26 Ultra 512GB Black',
+                      'галакси с26 ультра 512 черный'):
+            with self.subTest(query=query):
+                self.assert_samsung_quote(find_products(query, self.products)[1])
+
+    def test_samsung_alias_keeps_model_version_memory_and_color_constraints(self):
+        for query in ('сасунг с25 ультра 512 черный', 'сасунг с26 512 черный'):
+            with self.subTest(query=query):
+                self.assertEqual(find_products(query, self.products)[1], [])
+        found = find_products('сасунг с26 ультра 256 черный', self.products)[1]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].price, Decimal('76700'))
+        found = find_products('сасунг с26 ультра 512 белый', self.products)[1]
+        self.assertEqual(len(found), 1)
+        self.assertIn(' White ', found[0].name)
