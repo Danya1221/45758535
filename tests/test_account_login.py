@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -217,3 +218,125 @@ class AccountLoginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.client.session.auth_key)
         self.client.send_error = None
         self.assertEqual(await self.auth.begin(), 'phone')
+
+    async def test_known_telegram_rejections_have_actionable_diagnostics(self):
+        cases = (
+            (errors.ApiIdInvalidError, 'API_ID/API_HASH'),
+            (errors.ApiIdPublishedFloodError, 'API_ID'),
+            (errors.PhoneNumberBannedError, 'заблокирован'),
+            (errors.PhoneNumberFloodError, 'Срок ожидания не указан'),
+            (errors.PhonePasswordFloodError, 'Срок ожидания не указан'),
+            (errors.PhoneNumberUnoccupiedError, 'нет зарегистрированного'),
+            (errors.PhoneNumberAppSignupForbiddenError, 'существующий аккаунт'),
+            (errors.PhoneCodeHashEmptyError, 'идентификатор'),
+            (errors.AuthRestartError, 'заново'),
+            (errors.SendCodeUnavailableError, 'не может отправить'),
+            (errors.SmsCodeCreateFailedError, 'SMS'),
+            (errors.UpdateAppToLoginError, 'обновления клиента'),
+            (errors.AuthKeyDuplicatedError, 'одновременное'),
+        )
+        for error_type, expected in cases:
+            with self.subTest(error=error_type.__name__):
+                self.client.send_error = error_type(request=None)
+                await self.auth.begin()
+                with self.assertLogs('catalog_bot.account_login', level='WARNING') as logs:
+                    with self.assertRaises(LoginError) as error:
+                        await self.auth.phone_number('+79991234567')
+                self.assertTrue(error.exception.restart)
+                self.assertIn(expected, str(error.exception))
+                self.assertIn(f'LOGIN/send_code/{error_type.__name__}', str(error.exception))
+                self.assertIn(f'stage=send_code error={error_type.__name__}', logs.output[0])
+                self.assertNotIn('79991234567', '\n'.join(logs.output) + str(error.exception))
+                self.assertEqual(self.auth.phase, '')
+
+    async def test_unknown_rpc_diagnostic_never_logs_server_text_or_request(self):
+        await self.auth.begin()
+        secrets = ('+79991234567', '98765', 'private-password', 'private-hash')
+        request = SimpleNamespace(phone_number=secrets[0], phone_code=secrets[1],
+                                  password=secrets[2], phone_code_hash=secrets[3])
+        self.client.send_error = errors.RPCError(request, ' '.join(secrets), code=400)
+        with self.assertLogs('catalog_bot.account_login', level='WARNING') as logs:
+            with self.assertRaises(LoginError) as error:
+                await self.auth.phone_number(secrets[0])
+        output = str(error.exception) + '\n'.join(logs.output)
+        self.assertIn('LOGIN/send_code/RPCError', output)
+        self.assertIn('Telegram отклонил', output)
+        for secret in secrets:
+            self.assertNotIn(secret, output)
+
+    async def test_internal_error_is_not_misreported_as_telegram_rejection(self):
+        await self.auth.begin()
+        self.client.send_error = TypeError('private code 98765 and password')
+        with self.assertLogs('catalog_bot.account_login', level='WARNING') as logs:
+            with self.assertRaises(LoginError) as error:
+                await self.auth.phone_number('+79991234567')
+        output = str(error.exception) + '\n'.join(logs.output)
+        self.assertIn('Внутренняя ошибка приложения', output)
+        self.assertIn('LOGIN/send_code/TypeError', output)
+        for private in ('Telegram отклонил', 'private', '98765'):
+            self.assertNotIn(private, output)
+
+    async def test_unregistered_exception_class_names_are_not_exposed(self):
+        await self.auth.begin()
+        self.client.send_error = type('PrivatePassword98765', (Exception,), {})('private body')
+        with self.assertLogs('catalog_bot.account_login', level='WARNING') as logs:
+            with self.assertRaises(LoginError) as error:
+                await self.auth.phone_number('+79991234567')
+        output = str(error.exception) + '\n'.join(logs.output)
+        self.assertIn('LOGIN/send_code/InternalError', output)
+        self.assertNotIn('PrivatePassword98765', output)
+        self.assertNotIn('private body', output)
+
+    async def test_failed_save_names_volume_and_correct_operation(self):
+        await self.start_code()
+        for error_type in (PermissionError, sqlite3.OperationalError):
+            with self.subTest(error=error_type.__name__):
+                with patch('catalog_bot.account_login.persist_session', side_effect=error_type('private file path')):
+                    with self.assertLogs('catalog_bot.account_login', level='WARNING') as logs:
+                        with self.assertRaises(LoginError) as error:
+                            await self.auth.code('1 2 3 4 5')
+                output = str(error.exception) + '\n'.join(logs.output)
+                self.assertIn('Volume', output)
+                self.assertIn('DATA_DIR', output)
+                self.assertIn(f'LOGIN/save_session/{error_type.__name__}', output)
+                self.assertNotIn('Нет связи с Telegram', output)
+                self.assertNotIn('private file path', output)
+                self.assertFalse(self.auth.ready)
+                self.ready.assert_not_awaited()
+
+    async def test_code_and_password_failures_report_the_actual_step(self):
+        self.client.two_factor = True
+        await self.start_code()
+        with self.assertLogs('catalog_bot.account_login', level='WARNING'):
+            with self.assertRaises(LoginError) as code_error:
+                await self.auth.code('9 9 9 9 9')
+        self.assertIn('LOGIN/check_code/PhoneCodeInvalidError', str(code_error.exception))
+        self.assertEqual(await self.auth.code('1 2 3 4 5'), 'password')
+        with self.assertLogs('catalog_bot.account_login', level='WARNING'):
+            with self.assertRaises(LoginError) as password_error:
+                await self.auth.password('wrong-private-password')
+        self.assertIn('LOGIN/check_password/PasswordHashInvalidError', str(password_error.exception))
+        self.assertNotIn('wrong-private-password', str(password_error.exception))
+
+    async def test_premium_wait_is_respected_without_resending(self):
+        await self.auth.begin()
+        self.client.send_error = errors.FloodPremiumWaitError(request=None, capture=90)
+        with self.assertLogs('catalog_bot.account_login', level='WARNING'):
+            with self.assertRaisesRegex(LoginError, '90 секунд'):
+                await self.auth.phone_number('+79991234567')
+        with self.assertRaises(LoginError):
+            await self.auth.phone_number('+79991234567')
+        self.assertEqual(len(self.client.phone_calls), 1)
+
+    async def test_transient_server_failure_preserves_phase_for_later_input(self):
+        await self.auth.begin()
+        self.client.send_error = errors.ServerError(None, 'private server details', code=500)
+        with self.assertLogs('catalog_bot.account_login', level='WARNING'):
+            with self.assertRaises(LoginError) as error:
+                await self.auth.phone_number('+79991234567')
+        self.assertFalse(error.exception.restart)
+        self.assertIn('Временная ошибка', str(error.exception))
+        self.assertNotIn('private server details', str(error.exception))
+        self.assertEqual(self.auth.phase, 'phone')
+        self.client.send_error = None
+        self.assertEqual(await self.auth.phone_number('+79991234567'), 'code')

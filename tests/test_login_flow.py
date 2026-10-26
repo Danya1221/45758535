@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from aiogram import Bot, Dispatcher
+from telethon import errors
 from telethon.sessions import SQLiteSession
 
 from catalog_bot.app import Application, Config, run
@@ -111,6 +112,19 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.feed('1 2 3 4 5', chat_type='group')
         self.assertEqual(self.client.sign_calls, [])
         self.assertFalse(self.app.auth.ready)
+
+    async def test_owner_receives_diagnostic_and_flow_is_cleared_after_api_error(self):
+        await self.feed('/login')
+        self.client.send_error = errors.ApiIdInvalidError(request=None)
+        with self.assertLogs('catalog_bot.account_login', level='WARNING'):
+            await self.feed('+79991234567')
+        self.assertIn('API_ID/API_HASH', self.texts()[-1])
+        self.assertIn('LOGIN/send_code/ApiIdInvalidError', self.texts()[-1])
+        self.assertNotIn('79991234567', self.texts()[-1])
+        await self.feed('+79991234567')
+        self.assertEqual(len(self.client.phone_calls), 1)
+        self.assertFalse(self.app.auth.ready)
+        self.assertFalse(self.store.get('active', False))
 
     async def test_price_worker_waits_for_login_and_wakes_immediately(self):
         self.app.price_sync = type('Sync', (), {'refresh': AsyncMock(), 'retry_after': 0.0, 'peer': None})()
