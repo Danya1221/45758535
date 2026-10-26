@@ -8,7 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from telethon import errors
+from telethon import errors, functions, types
 
 from .sessions import persist_session
 
@@ -40,7 +40,7 @@ _RESTART_MESSAGES = {
     errors.PhoneNumberAppSignupForbiddenError: 'Для входа нужен существующий аккаунт Telegram. Регистрация нового аккаунта через этого бота не выполняется.',
     errors.PhoneCodeHashEmptyError: 'Telegram не получил идентификатор запроса кода. Начни заново: /login.',
     errors.AuthRestartError: 'Telegram потребовал начать авторизацию заново. Повтори /login позже.',
-    errors.SendCodeUnavailableError: 'Telegram сейчас не может отправить код доступным способом. Проверь официальный Telegram и попробуй /login позднее.',
+    errors.SendCodeUnavailableError: 'Telegram сейчас не может отправить код доступным способом. Используй /loginqr: подтверди вход через Telegram на телефоне. Не повторяй запрос кода подряд.',
     errors.SmsCodeCreateFailedError: 'Telegram не смог отправить SMS с кодом. Попробуй /login позднее.',
     errors.UpdateAppToLoginError: 'Telegram требует обновления клиента для входа. Сообщи разработчику код диагностики из этого сообщения.',
     errors.AuthKeyDuplicatedError: 'Telegram обнаружил одновременное использование одной авторизации. Останови другие экземпляры бота и оставь одну replica; затем повтори /login.',
@@ -65,9 +65,13 @@ class AccountLogin:
         self.attempts = 0
         self.generation = 0
         self.operation = 'restore'
+        self.qr = self.qr_waiter = None
 
     def cancel(self):
         self.generation += 1
+        if self.qr_waiter and not self.qr_waiter.done():
+            self.qr_waiter.cancel()
+        self.qr = self.qr_waiter = None
         self.phase = self.phone = self.code_hash = ''
         self.deadline = 0
         self.attempts = 0
@@ -85,7 +89,8 @@ class AccountLogin:
         self._check_wait()
         if self.phase != phase or self.clock() >= self.deadline:
             self.cancel()
-            raise LoginError('Ввод истёк или был отменён. Начни заново: /login', restart=True)
+            command = '/loginqr' if phase == 'qr' else '/login'
+            raise LoginError(f'Ввод истёк или был отменён. Начни заново: {command}', restart=True)
 
     async def _connect(self):
         if not self.client.is_connected():
@@ -159,7 +164,11 @@ class AccountLogin:
             try:
                 await self._connect()
                 self.operation = 'send_code'
-                sent = await asyncio.wait_for(self.client.send_code_request(phone), 30)
+                # A new owner flow must send a fresh request. Telethon's
+                # convenience helper caches hashes across cancelled /login
+                # flows and silently changes later calls into ResendCode.
+                sent = await asyncio.wait_for(self.client(functions.auth.SendCodeRequest(
+                    phone.removeprefix('+'), self.client.api_id, self.client.api_hash, types.CodeSettings())), 30)
                 self._check_generation(generation)
                 code_hash = getattr(sent, 'phone_code_hash', None)
                 if not code_hash:
@@ -167,7 +176,7 @@ class AccountLogin:
                         await self._complete(generation)
                         return 'ready'
                     self.cancel()
-                    raise LoginError('Telegram запросил другой способ подтверждения. Начни заново: /login', restart=True)
+                    raise LoginError('Telegram запросил другой способ подтверждения. Используй вход по QR: /loginqr', restart=True)
                 self.phone, self.code_hash = phone, code_hash
                 self.phase, self.deadline = 'code', self.clock() + 300
                 return self.phase
@@ -177,6 +186,74 @@ class AccountLogin:
                 return self.phase
             except Exception as exc:
                 await self._failure(exc)
+
+    async def _start_qr_waiter(self):
+        # Install the update listener BEFORE a QR image reaches the owner.
+        self.qr_waiter = asyncio.create_task(self.qr.wait())
+        self.qr_waiter.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        await asyncio.sleep(0)
+
+    async def begin_qr(self):
+        async with self.lock:
+            self._check_wait()
+            self.cancel()
+            generation = self.generation
+            try:
+                if await self._restore():
+                    return None
+                self.operation = 'create_qr'
+                qr = await asyncio.wait_for(self.client.qr_login(), 30)
+                self._check_generation(generation)
+                self.qr = qr
+                self.phase, self.deadline = 'qr', self.clock() + 300
+                await self._start_qr_waiter()
+                return generation
+            except Exception as exc:
+                await self._failure(exc)
+
+    def qr_url(self, generation):
+        self._check_generation(generation)
+        self._check_phase('qr')
+        return self.qr.url
+
+    async def wait_qr(self, generation):
+        async with self.lock:
+            self._check_generation(generation)
+            self._check_phase('qr')
+            waiter = self.qr_waiter
+            self.operation = 'wait_qr'
+        try:
+            await waiter
+        except asyncio.TimeoutError:
+            async with self.lock:
+                self._check_generation(generation)
+                self._check_phase('qr')
+                self.operation = 'refresh_qr'
+                try:
+                    await asyncio.wait_for(self.qr.recreate(), 30)
+                    self._check_generation(generation)
+                    await self._start_qr_waiter()
+                    return 'refresh'
+                except Exception as exc:
+                    await self._failure(exc)
+        except errors.SessionPasswordNeededError:
+            async with self.lock:
+                self._check_generation(generation)
+                self.qr = self.qr_waiter = None
+                self.phase, self.deadline = 'password', self.clock() + 300
+                return 'password'
+        except Exception as exc:
+            async with self.lock:
+                self._check_generation(generation)
+                await self._failure(exc)
+        else:
+            async with self.lock:
+                self._check_generation(generation)
+                try:
+                    await self._complete(generation)
+                    return 'ready'
+                except Exception as exc:
+                    await self._failure(exc)
 
     async def code(self, value: str):
         async with self.lock:

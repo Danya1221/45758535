@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from telethon import errors
+from telethon import errors, functions
 from telethon.crypto import AuthKey
 from telethon.sessions import SQLiteSession, StringSession
 
@@ -16,6 +16,7 @@ from catalog_bot.account_login import AccountLogin, LoginError
 class AccountClient:
     def __init__(self, session=None, *, two_factor=False):
         self.session = session if session is not None else StringSession()
+        self.api_id, self.api_hash = 123, 'test'
         self.connected = False
         self.authorized = bool(self.session.auth_key)
         self.two_factor = two_factor
@@ -31,6 +32,11 @@ class AccountClient:
     async def is_user_authorized(self): return self.authorized
     async def get_me(self): return self.user if self.authorized else None
     def add_event_handler(self, *args): self.handlers.append(args)
+
+    async def __call__(self, request):
+        if isinstance(request, functions.auth.SendCodeRequest):
+            return await self.send_code_request('+' + request.phone_number.removeprefix('+'))
+        raise AssertionError('Unexpected request type')
 
     async def send_code_request(self, phone):
         self.phone_calls.append(phone)

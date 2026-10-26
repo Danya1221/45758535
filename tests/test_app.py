@@ -24,9 +24,9 @@ class LocalSession(BaseSession):
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
-        if method.__api_method__ == 'sendMessage':
+        if method.__api_method__ in {'sendMessage', 'sendPhoto'}:
             return Message(message_id=len(self.calls), date=datetime.now(timezone.utc),
-                           chat=Chat(id=method.chat_id, type='private'), text=method.text).as_(bot)
+                           chat=Chat(id=method.chat_id, type='private'), text=getattr(method, 'text', None)).as_(bot)
         return True
 
     async def stream_content(self, *args, **kwargs):

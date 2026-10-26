@@ -16,7 +16,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, RPCError
@@ -29,6 +29,7 @@ from .price_sync import PriceSync, format_summary
 from .pricing import CATEGORIES, MarkupPolicy, MarkupRule, category_for, format_policy, price_products, resolve_category
 from .sessions import load_string_session, persist_session
 from .account_login import AccountLogin, LoginError
+from .login_qr import qr_png
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ class Inputs(StatesGroup):
     login_phone = State()
     login_code = State()
     login_password = State()
+    login_qr = State()
 
 
 class OwnerOnly(BaseMiddleware):
@@ -119,7 +121,7 @@ def keyboard(rows: list[list[tuple[str, str]]]):
 
 def menu():
     return keyboard([
-        [('🔐 Войти в аккаунт', 'login')],
+        [('🔐 По номеру', 'login'), ('📷 Войти по QR', 'loginqr')],
         [('💰 Загрузить прайс', 'price'), ('💬 Группы', 'chats:0')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup')],
@@ -149,6 +151,7 @@ class Application:
         self.account_changed = asyncio.Event()
         self.refresh_requested = asyncio.Event()
         self.auth = AccountLogin(client, config.data_dir, self.account_ready)
+        self.qr_task: asyncio.Task | None = None
         self.engine = Engine(store, self.send_reply, max_per_minute=config.max_per_minute,
                              dedup_seconds=config.dedup_seconds, contact=config.contact)
         self.price_sync = PriceSync(store, client, config.price_bot, self.notify, request_text=config.price_request,
@@ -232,7 +235,15 @@ class Application:
             return False
         return True
 
+    def cancel_login(self):
+        self.auth.cancel()
+        task, self.qr_task = self.qr_task, None
+        if task and not task.done():
+            task.cancel()
+        return task
+
     async def begin_login(self, message: Message, state: FSMContext):
+        self.cancel_login()
         await state.clear()
         try:
             phase = await self.auth.begin()
@@ -245,7 +256,68 @@ class Application:
         self.store.set('active', False)
         self.account_available.clear()
         await state.set_state(Inputs.login_phone)
-        await message.answer('Пришли номер аккаунта с кодом страны, например +79991234567.\nОтмена: /cancel.')
+        await message.answer('Пришли номер аккаунта с кодом страны, например +79991234567.\n'
+                             'Если код не приходит: /loginqr. Отмена: /cancel.')
+
+    async def begin_login_qr(self, message: Message, state: FSMContext):
+        self.cancel_login()
+        await state.clear()
+        try:
+            generation = await self.auth.begin_qr()
+        except LoginError as exc:
+            await message.answer(str(exc))
+            return
+        if generation is None:
+            await message.answer(f'✅ Аккаунт уже подключён. Telegram ID: {self.auth.user.id}.', reply_markup=menu())
+            return
+        self.store.set('active', False)
+        self.account_available.clear()
+        await state.set_state(Inputs.login_qr)
+        self.qr_task = asyncio.create_task(self.qr_login_worker(message, state, generation))
+
+    async def qr_login_worker(self, message: Message, state: FSMContext, generation: int):
+        photo = None
+        caption = ('На телефоне открой Telegram → Настройки → Устройства → Подключить устройство.\n'
+                   'Отсканируй этот QR с экрана компьютера и подтверди вход.\n'
+                   'QR обновляется автоматически до 5 минут. Отмена: /cancel.')
+        try:
+            while True:
+                png = await asyncio.to_thread(qr_png, self.auth.qr_url(generation))
+                self.auth._check_generation(generation)
+                image = BufferedInputFile(png, filename='login_qr.png')
+                if photo is None:
+                    photo = await message.answer_photo(image, caption=caption, protect_content=True)
+                else:
+                    await photo.edit_media(InputMediaPhoto(media=image, caption=caption))
+                self.auth._check_generation(generation)
+                result = await self.auth.wait_qr(generation)
+                if result != 'refresh':
+                    await self.login_result(message, state, result)
+                    return
+        except LoginError as exc:
+            if self.qr_task is asyncio.current_task():
+                self.auth.cancel()
+                await state.clear()
+                await message.answer(str(exc))
+        except Exception:
+            # Never log the exception/request: they can contain the QR token.
+            log.warning('QR login display failed; diagnostic=LOGIN/display_qr')
+            if self.qr_task is asyncio.current_task():
+                self.auth.cancel()
+                await state.clear()
+                try:
+                    await message.answer('Не удалось показать QR или завершить вход. Повтори /loginqr.\n'
+                                         'Код диагностики: LOGIN/display_qr')
+                except TelegramAPIError:
+                    pass
+        finally:
+            if photo is not None:
+                try:
+                    await photo.delete()
+                except TelegramAPIError:
+                    pass
+            if self.qr_task is asyncio.current_task():
+                self.qr_task = None
 
     async def login_input(self, message: Message, state: FSMContext, phase: str):
         value = message.text or ''
@@ -259,8 +331,12 @@ class Application:
         except LoginError as exc:
             if exc.restart:
                 await state.clear()
-            await message.answer(str(exc))
+            await message.answer(str(exc), reply_markup=keyboard([[('📷 Войти по QR', 'loginqr')]]) if exc.restart else None)
             return
+
+        await self.login_result(message, state, result)
+
+    async def login_result(self, message: Message, state: FSMContext, result: str):
         if result == 'code':
             await state.set_state(Inputs.login_code)
             await message.answer('Telegram отправил код входа. Введи его цифры через пробелы, например 1 2 3 4 5.\n'
@@ -441,16 +517,17 @@ class Application:
         dp = self.dp
 
         @dp.message(Inputs.login_password, F.text,
-                    ~F.text.regexp(r'^/(?:cancel|login|start|help)(?:@\w+)?(?:\s|$)'))
+                    ~F.text.regexp(r'^/(?:cancel|login|loginqr|start|help)(?:@\w+)?(?:\s|$)'))
         async def login_password(message: Message, state: FSMContext):
             await self.login_input(message, state, 'password')
 
         @dp.message(Command('start', 'help'))
         async def start(message: Message, state: FSMContext):
-            self.auth.cancel()
+            self.cancel_login()
             await state.clear()
             await message.answer('Бот отвечает по актуальному прайсу в выбранных группах.\n\n'
                                  'Подключить аккаунт: /login — номер, код, затем пароль 2FA при необходимости.\n\n'
+                                 '/loginqr — вход по QR через Telegram на телефоне, без запроса кода.\n\n'
                                  '1. /price — загрузить прайс от поставщика; /catalog — свой список.\n'
                                  '2. /markup — настроить наценку.\n3. /chats — выбрать группы.\n'
                                  '4. /test — проверить запрос.\n5. /run — включить ответы.\n\n'
@@ -460,6 +537,10 @@ class Application:
         @dp.message(Command('login'))
         async def login_account(message: Message, state: FSMContext):
             await self.begin_login(message, state)
+
+        @dp.message(Command('loginqr'))
+        async def login_account_qr(message: Message, state: FSMContext):
+            await self.begin_login_qr(message, state)
 
         @dp.message(Command('price'))
         async def price(message: Message, state: FSMContext):
@@ -506,7 +587,7 @@ class Application:
 
         @dp.message(Command('cancel'))
         async def cancel(message: Message, state: FSMContext):
-            self.auth.cancel()
+            self.cancel_login()
             await state.clear()
             await message.answer('Ввод отменён.', reply_markup=menu())
 
@@ -629,6 +710,8 @@ class Application:
             message = callback.message
             if action == 'login':
                 await self.begin_login(message, state)
+            elif action == 'loginqr':
+                await self.begin_login_qr(message, state)
             elif action == 'catalog':
                 await state.set_state(Inputs.catalog)
                 await message.answer(CATALOG_PROMPT)
@@ -652,7 +735,7 @@ class Application:
             elif action == 'status':
                 await message.answer(self.status(), reply_markup=menu())
             elif action == 'home':
-                self.auth.cancel()
+                self.cancel_login()
                 await state.clear()
                 await message.answer('Выбери действие:', reply_markup=menu())
             elif action == 'run':
@@ -788,7 +871,7 @@ async def run(config: Config):
             client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
             client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
-            ('start', 'Меню'), ('login', 'Войти в аккаунт Telegram'),
+            ('start', 'Меню'), ('login', 'Войти по номеру'), ('loginqr', 'Войти по QR'),
             ('price', 'Загрузить прайс'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
             ('markup', 'Наценка по категориям'),
@@ -805,7 +888,9 @@ async def run(config: Config):
             task.result()
     finally:
         if app is not None:
-            app.auth.cancel()
+            qr_task = app.cancel_login()
+            if qr_task is not None:
+                tasks.append(qr_task)
         for task in tasks:
             task.cancel()
         if tasks:

@@ -1,3 +1,5 @@
 Telethon==1.45.0
 aiogram==3.31.0
 python-dotenv==1.2.4
+qrcode[png]==8.2
+pypng==0.20220715.0
