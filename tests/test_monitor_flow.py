@@ -26,6 +26,13 @@ class DispatchClient(TelegramClient):
         self.set_receive_updates = AsyncMock()
         self.get_messages = AsyncMock(return_value=[])
         self.get_entity = AsyncMock(side_effect=OSError('offline sender lookup'))
+        self.get_input_entity = AsyncMock(side_effect=self.private_recipient)
+
+    @staticmethod
+    async def private_recipient(peer):
+        if not isinstance(peer, types.PeerUser) or peer.user_id <= 0:
+            raise ValueError('Expected an individual user')
+        return types.InputPeerUser(peer.user_id, 800)
 
     def is_connected(self):
         return True
@@ -59,32 +66,37 @@ class MonitorFlowTests(unittest.IsolatedAsyncioTestCase):
         self.store.close()
         self.temp.cleanup()
 
-    def update(self, text='s25 navy', *, number=28, outgoing=False, channel=False, sender=True, age=0):
+    def update(self, text='s25 navy', *, number=28, outgoing=False, channel=False, sender=True, age=0, from_peer=None):
         peer = types.PeerChannel(123) if channel else types.PeerChat(123)
-        message = types.Message(id=number, peer_id=peer, from_id=types.PeerUser(77 if outgoing else 88),
+        author = from_peer or types.PeerUser(77 if outgoing else 88)
+        message = types.Message(id=number, peer_id=peer, from_id=author,
                                 date=datetime.fromtimestamp(int(time.time()) - age, timezone.utc),
                                 message=text, out=outgoing)
         cls = types.UpdateNewChannelMessage if channel else types.UpdateNewMessage
         update = cls(message=message, pts=20, pts_count=1)
-        update._entities = {88: types.User(id=88, first_name='Buyer', access_hash=800, bot=False)} if sender else {}
+        update._entities = ({author.user_id: types.User(id=author.user_id, first_name='Buyer', access_hash=800, bot=False)}
+                            if sender and isinstance(author, types.PeerUser) else {})
         return update
 
-    async def test_basic_group_incoming_navy_sends_reply_to_original_message(self):
+    async def test_basic_group_incoming_navy_sends_private_quote_to_author(self):
         await self.client._dispatch_update(self.update())
         self.client.send_message.assert_awaited_once()
         args = self.client.send_message.await_args
-        self.assertEqual(args.args[0], -123)
-        self.assertEqual(args.kwargs['reply_to'], 28)
+        self.assertEqual(args.args[0], types.InputPeerUser(88, 800))
+        self.client.get_input_entity.assert_awaited_once_with(types.PeerUser(88))
+        self.assertNotIn('reply_to', args.kwargs)
         self.assertIn('Galaxy S25 12/256 Navy', args.args[1])
         self.assertIn('49 000 ₽', args.args[1])
         self.assertNotIn('Ultra', args.args[1])
         self.assertEqual(self.store.message_check(-123, 28)['result'], 'sent')
 
-    async def test_megagroup_incoming_uses_marked_chat_id(self):
+    async def test_megagroup_also_sends_to_user_and_keeps_source_in_history(self):
         self.store.toggle_chat(-1000000000123, 'Мегагруппа')
         await self.client._dispatch_update(self.update(channel=True))
-        self.assertEqual(self.client.send_message.await_args.args[0], -1000000000123)
+        self.assertEqual(self.client.send_message.await_args.args[0], types.InputPeerUser(88, 800))
+        self.assertNotIn('reply_to', self.client.send_message.await_args.kwargs)
         self.assertEqual(self.store.message_check(-1000000000123, 28)['result'], 'sent')
+        self.assertEqual(self.store.delivery(-1000000000123, 28)['sender_id'], 88)
 
     async def test_own_and_missing_black_do_not_block_next_incoming_navy(self):
         await self.client._dispatch_update(self.update('S25 256 black', number=1, outgoing=True))
@@ -158,3 +170,41 @@ class MonitorFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('-999', self.app.monitor_status())
         self.store.toggle_chat(-123, 'Тест')
         self.assertIn('пока не получены', self.app.monitor_status())
+
+    async def test_closed_private_messages_never_fall_back_to_group_or_pause_others(self):
+        self.client.send_message.side_effect = errors.UserPrivacyRestrictedError(None)
+        await self.client._dispatch_update(self.update())
+        self.assertEqual(self.client.send_message.await_count, 1)
+        self.assertIsInstance(self.client.send_message.await_args.args[0], types.InputPeerUser)
+        self.assertEqual(self.store.delivery(-123, 28)['status'], 'failed')
+        self.assertTrue(self.store.get('active'))
+        self.assertIn('Ответы другим пользователям продолжаются', self.texts()[-1])
+        self.assertNotIn('приостановлены', self.texts()[-1])
+        self.client.send_message.side_effect = None
+        update = self.update(number=29, from_peer=types.PeerUser(99))
+        await self.client._dispatch_update(update)
+        self.assertEqual(self.client.send_message.await_count, 2)
+        self.assertEqual(self.client.send_message.await_args.args[0].user_id, 99)
+
+    async def test_wrong_recipient_type_cannot_send_into_group(self):
+        self.client.get_input_entity.side_effect = None
+        self.client.get_input_entity.return_value = types.InputPeerChat(123)
+        await self.client._dispatch_update(self.update())
+        self.client.send_message.assert_not_awaited()
+        self.assertEqual(self.store.delivery(-123, 28)['detail'], 'recipient_not_user')
+        self.assertTrue(self.store.get('active'))
+
+    async def test_anonymous_channel_sender_cannot_be_private_recipient(self):
+        update = self.update(from_peer=types.PeerChannel(12345))
+        await self.client._dispatch_update(update)
+        self.client.send_message.assert_not_awaited()
+        self.client.get_input_entity.assert_not_awaited()
+        self.assertEqual(self.store.message_check(-123, 28)['result'], 'missing_sender')
+
+    async def test_private_flood_wait_pauses_without_any_group_fallback(self):
+        self.client.send_message.side_effect = errors.FloodWaitError(None, capture=25)
+        await self.client._dispatch_update(self.update())
+        self.assertFalse(self.store.get('active'))
+        self.assertEqual(self.store.delivery(-123, 28)['detail'], 'flood_wait_25s')
+        self.assertEqual(self.client.send_message.await_count, 1)
+        self.assertIsInstance(self.client.send_message.await_args.args[0], types.InputPeerUser)

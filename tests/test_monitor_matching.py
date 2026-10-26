@@ -54,8 +54,8 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
         self.store.set('price_ready', True)
         self.sent = []
 
-        async def send(chat_id, message_id, text):
-            self.sent.append((chat_id, message_id, text))
+        async def send(recipient, source_message_id, text):
+            self.sent.append((recipient, source_message_id, text))
 
         self.engine = Engine(self.store, send, clock=lambda: 1000)
 
@@ -68,12 +68,14 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
                     text=text, timestamp=1000)
         return Incoming(**(data | changes))
 
-    async def test_incoming_short_navy_query_replies_to_its_original_message(self):
+    async def test_incoming_short_navy_query_privately_quotes_its_author(self):
         result = await self.engine.process(self.message('s25 navy', message_id=28))
         self.assertEqual(result, 'sent')
         self.assertEqual(len(self.sent), 1)
-        chat_id, message_id, reply = self.sent[0]
-        self.assertEqual((chat_id, message_id), (-123, 28))
+        recipient, source_message_id, reply = self.sent[0]
+        self.assertEqual((recipient, source_message_id), (55, 28))
+        self.assertEqual(self.store.delivery(-123, 28)['status'], 'sent')
+        self.assertIsNone(self.store.delivery(55, 28))
         self.assertIn('Galaxy S25 12/256 Navy SM-S931B', reply)
         self.assertIn('50 800 ₽', reply)
         self.assertEqual(reply.count('• '), 1)

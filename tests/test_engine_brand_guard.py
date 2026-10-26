@@ -16,8 +16,8 @@ class EngineBrandGuardTests(unittest.IsolatedAsyncioTestCase):
         self.store.set('active', True)
         self.sent = []
 
-        async def send(chat_id, message_id, text):
-            self.sent.append((chat_id, message_id, text))
+        async def send(recipient, source_message_id, text):
+            self.sent.append((recipient, source_message_id, text))
 
         self.engine = Engine(self.store, send, clock=lambda: 1000)
 
@@ -45,13 +45,13 @@ class EngineBrandGuardTests(unittest.IsolatedAsyncioTestCase):
             Product('Xiaomi 17 12/512 Black SIM', Decimal('45000'), 5),
         ])
         self.assertEqual(await self.engine.process(self.message('Куплю айфон 17 512 черный сим')), 'sent')
-        self.assertEqual(self.sent[0][:2], (-100123, 1))
+        self.assertEqual(self.sent[0][:2], (55, 1))
         self.assertIn('iPhone 17', self.sent[0][2])
         self.assertIn('95 000 ₽', self.sent[0][2])
         self.assertNotIn('Xiaomi', self.sent[0][2])
         self.assertNotIn('45 000 ₽', self.sent[0][2])
 
-    async def test_identifier_cannot_force_wrong_brand_into_group_reply(self):
+    async def test_identifier_cannot_force_wrong_brand_into_private_quote(self):
         self.store.replace_products([Product('Xiaomi 17 12/512 Black SIM', Decimal('45000'), 1, sku='IP17')])
         result = await self.engine.process(self.message('Куплю iPhone 17 IP17'))
         self.assertEqual(result, 'no_match')

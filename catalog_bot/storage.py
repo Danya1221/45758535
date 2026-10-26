@@ -59,6 +59,10 @@ class Store:
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('intro', 'Есть в наличии:')")
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('catalog_version', '0')")
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('pricing_version', '0')")
+        # Remove the former automatic supplier heading from persisted setups.
+        # Custom owner-written introductions remain intact.
+        if self.get('intro') == 'По актуальному прайсу:':
+            self.set('intro', '')
         # An interrupted send must not be retried automatically after a restart.
         if self.db.execute("SELECT 1 FROM deliveries WHERE status='pending'").fetchone():
             self.db.execute("UPDATE deliveries SET status='uncertain', detail='process_restart' WHERE status='pending'")
@@ -148,9 +152,10 @@ class Store:
             self.set('price_source', source)
             self.set('price_updated_at', time.time())
             self.set('price_ready', True)
-            # A supplier price does not establish actual stock availability.
-            if self.get('intro') == 'Есть в наличии:':
-                self.set('intro', 'По актуальному прайсу:')
+            # Supplier replies start with the product; a price feed establishes
+            # neither stock availability nor a need for an automatic heading.
+            if self.get('intro') in {'Есть в наличии:', 'По актуальному прайсу:'}:
+                self.set('intro', '')
             self.db.execute('COMMIT')
         except BaseException:
             self.db.execute('ROLLBACK')

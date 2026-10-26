@@ -640,7 +640,12 @@ def money(price: Decimal) -> str:
 
 
 def build_reply(products: list[Product], intro: str | None = None, contact: str = "", limit: int = 5) -> str:
-    lines = [intro or ('По актуальному прайсу:' if any(p.stock is None for p in products) else 'Есть в наличии:')]
+    unknown_stock = any(p.stock is None for p in products)
+    if intro == 'По актуальному прайсу:' or (unknown_stock and intro == 'Есть в наличии:'):
+        intro = ''
+    elif intro is None:
+        intro = '' if unknown_stock else 'Есть в наличии:'
+    lines = [intro] if intro else []
     for product in products[:limit]:
         price = f" — {money(product.price)}" if product.price is not None else ""
         region = f' {product.country or product.price_country}' if product.country or product.price_country else ''

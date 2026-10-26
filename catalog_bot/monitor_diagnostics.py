@@ -21,7 +21,7 @@ REASONS = {
     'forwarded': 'пересланное сообщение',
     'empty': 'нет текста запроса',
     'too_long': 'текст длиннее 12 000 символов',
-    'missing_sender': 'не определён отправитель сообщения',
+    'missing_sender': 'нет личного получателя: автор не определён либо пишет анонимно или от канала',
     'not_group': 'сообщение не из группы',
     'unselected': 'группа не выбрана для ответов',
     'paused': 'на момент обработки ответы были на паузе',
@@ -39,7 +39,7 @@ REASONS = {
     'duplicate': 'на этот запрос уже отвечали или начали отправку',
     'cancelled': 'во время подбора изменились прайс, наценка, выбор групп или состояние ответов',
     'sender_unavailable': 'не удалось получить сведения об отправителе',
-    'failed': 'Telegram отклонил отправку ответа',
+    'failed': 'не удалось отправить ответ',
     'uncertain': 'результат отправки неизвестен; повторная отправка заблокирована',
     'pending': 'отправка начата, окончательный результат ещё не записан',
     'error': 'ошибка при обработке сообщения',
@@ -103,7 +103,7 @@ def diagnose_message(store: Store, message: Incoming, *, account_ready: bool = T
         return MessageDiagnostic('forwarded')
     if not message.is_group:
         return MessageDiagnostic('not_group')
-    if not message.sender_id:
+    if message.sender_id <= 0:
         return MessageDiagnostic('missing_sender')
     if not message.text.strip():
         return MessageDiagnostic('empty')

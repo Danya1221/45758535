@@ -39,7 +39,8 @@ class UserRequestTests(unittest.TestCase):
         self.assert_samsung_quote(products)
         reply = build_reply(products)
         self.assertEqual(reply.count('91 500 ₽'), 2)
-        self.assertIn('По актуальному прайсу:', reply)
+        self.assertTrue(reply.startswith('• Galaxy S26 Ultra'))
+        self.assertNotIn('По актуальному прайсу:', reply)
         for absent in ('OnePlus', 'Honor', 'iPhone', '76 700', '113 300'):
             self.assertNotIn(absent, reply)
 

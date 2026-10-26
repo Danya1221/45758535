@@ -24,9 +24,10 @@ class Incoming:
 
 
 class SendFailure(Exception):
-    def __init__(self, reason: str, uncertain: bool = False):
+    def __init__(self, reason: str, uncertain: bool = False, *, pause: bool = True):
         super().__init__(reason)
         self.uncertain = uncertain
+        self.pause = pause
 
 
 class Engine:
@@ -39,7 +40,7 @@ class Engine:
         self.lock = asyncio.Lock()
 
     async def process(self, message: Incoming) -> str:
-        if message.outgoing or message.is_bot or not message.is_group or message.forwarded or not message.sender_id:
+        if message.outgoing or message.is_bot or not message.is_group or message.forwarded or message.sender_id <= 0:
             return "ignored"
         if not message.text.strip() or len(message.text) > 12000:
             return "ignored"
@@ -72,10 +73,14 @@ class Engine:
                 return "duplicate"
             reply = build_reply(found, self.store.get('intro', 'Есть в наличии:'), self.contact)
             try:
-                await self.send(message.chat_id, message.message_id, reply)
+                # Send to the requesting user. The second argument identifies
+                # the source request; it is not a reply ID in the private chat.
+                # Reservations and history remain keyed by the source group.
+                await self.send(message.sender_id, message.message_id, reply)
             except SendFailure as exc:
                 self.store.finish(message.chat_id, message.message_id, 'uncertain' if exc.uncertain else 'failed', str(exc))
-                self.store.set('active', False)
+                if exc.uncertain or exc.pause:
+                    self.store.set('active', False)
                 return "uncertain" if exc.uncertain else "failed"
             except asyncio.CancelledError:
                 self.store.finish(message.chat_id, message.message_id, 'uncertain', 'cancelled_during_send')

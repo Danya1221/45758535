@@ -80,7 +80,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         await self.feed('/start', chat_type='group')
         self.assertEqual(self.transport.calls, [])
         await self.feed('/start')
-        self.assertIn('Бот отвечает', self.texts()[-1])
+        self.assertIn('Бот находит запросы', self.texts()[-1])
 
     async def test_import_test_and_run_flow(self):
         await self.feed('/catalog')
@@ -128,7 +128,8 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         await self.feed('/changes')
         self.assertIn('85000 → 86000', self.texts()[-1])
         await self.feed('/test Куплю iPhone 17 256 Black')
-        self.assertIn('По актуальному прайсу:', self.texts()[-1])
+        self.assertIn('• iPhone 17 256GB Black', self.texts()[-1])
+        self.assertNotIn('По актуальному прайсу:', self.texts()[-1])
         self.assertIn('86 000 ₽', self.texts()[-1])
 
     async def test_incomplete_price_leaves_previous_version(self):

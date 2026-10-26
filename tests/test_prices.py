@@ -109,6 +109,24 @@ class PriceHistoryTests(unittest.TestCase):
         self.store.close()
         self.temp.cleanup()
 
+    def test_supplier_refresh_keeps_replies_free_of_automatic_headings(self):
+        self.store.apply_price_snapshot(parse_price_feed(price_text()), 'bot:123')
+        self.assertEqual(self.store.get('intro'), '')
+        self.assertTrue(build_reply(self.store.products(), self.store.get('intro')).startswith('• Galaxy S26'))
+        self.store.apply_price_snapshot(parse_price_feed(price_text(price='61 000')), 'bot:123')
+        self.assertEqual(self.store.get('intro'), '')
+
+    def test_old_supplier_heading_is_removed_after_restart_but_custom_intro_survives(self):
+        self.store.set('intro', 'По актуальному прайсу:')
+        self.store.close()
+        self.store = Store(self.path)
+        self.assertEqual(self.store.get('intro'), '')
+        self.store.set('intro', 'Моё предложение:')
+        self.store.apply_price_snapshot(parse_price_feed(price_text()), 'bot:123')
+        self.store.close()
+        self.store = Store(self.path)
+        self.assertEqual(self.store.get('intro'), 'Моё предложение:')
+
     def test_price_change_uses_same_offer_and_persists(self):
         first = self.store.apply_price_snapshot(parse_price_feed(price_text()), 'bot:123')
         self.assertTrue(first['baseline'])

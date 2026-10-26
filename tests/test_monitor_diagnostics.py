@@ -70,7 +70,8 @@ class DiagnosticTests(unittest.IsolatedAsyncioTestCase):
         cases = [('own_message', {'outgoing': True}), ('bot', {'is_bot': True}),
                  ('forwarded', {'forwarded': True}), ('not_group', {'is_group': False}),
                  ('empty', {'text': ' '}), ('too_long', {'text': 'a' * 12001}),
-                 ('missing_sender', {'sender_id': 0}), ('unselected', {'chat_id': -1}),
+                 ('missing_sender', {'sender_id': 0}), ('missing_sender', {'sender_id': -100123}),
+                 ('unselected', {'chat_id': -1}),
                  ('old', {'timestamp': 800})]
         for result, attrs in cases:
             with self.subTest(result=result):

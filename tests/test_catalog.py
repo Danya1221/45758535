@@ -90,6 +90,18 @@ class MatchingTests(unittest.TestCase):
         self.assertNotIn('95 000', reply)
         self.assertEqual(build_reply([Product('Marshall Emberton III Black')]), 'Есть в наличии:\n• Marshall Emberton III Black')
 
+    def test_supplier_reply_starts_with_product_and_has_no_automatic_header(self):
+        product = Product('Galaxy S25 12/256 Navy', Decimal('49000'), None)
+        expected = '• Galaxy S25 12/256 Navy — 49 000 ₽'
+        for intro in (None, '', 'Есть в наличии:', 'По актуальному прайсу:'):
+            with self.subTest(intro=intro):
+                self.assertEqual(build_reply([product], intro), expected)
+
+    def test_custom_intro_and_contact_are_preserved_without_automatic_supplier_text(self):
+        product = Product('Galaxy S25 12/256 Navy', Decimal('49000'), None)
+        self.assertEqual(build_reply([product], 'Предложение:', '@seller'),
+                         'Предложение:\n• Galaxy S25 12/256 Navy — 49 000 ₽\n\n@seller')
+
 
 class ImportTests(unittest.TestCase):
     def test_headers_csv_and_decimal(self):

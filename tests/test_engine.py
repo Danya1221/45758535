@@ -20,8 +20,8 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.store.set('active', True)
         self.sent = []
 
-        async def send(chat, message, text):
-            self.sent.append((chat, message, text))
+        async def send(recipient, source_message, text):
+            self.sent.append((recipient, source_message, text))
 
         self.engine = Engine(self.store, send, clock=lambda: 1000)
 
@@ -33,10 +33,13 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         data = dict(chat_id=-100123, message_id=1, sender_id=55, text='Куплю iPhone 17', timestamp=1000)
         return Incoming(**(data | changes))
 
-    async def test_reply_goes_to_original_chat_and_message(self):
+    async def test_quote_goes_to_requesting_user_and_history_keeps_source_group(self):
         self.assertEqual(await self.engine.process(self.incoming()), 'sent')
-        self.assertEqual(self.sent[0][:2], (-100123, 1))
+        self.assertEqual(self.sent[0][:2], (55, 1))
         self.assertIn('85 000 ₽', self.sent[0][2])
+        delivery = self.store.delivery(-100123, 1)
+        self.assertEqual((delivery['sender_id'], delivery['status']), (55, 'sent'))
+        self.assertIsNone(self.store.delivery(55, 1))
 
     async def test_duplicate_concurrent_deliveries_only_send_once(self):
         results = await asyncio.gather(*(self.engine.process(self.incoming()) for _ in range(5)))
@@ -47,6 +50,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.process(self.incoming())
         self.assertEqual(await self.engine.process(self.incoming(chat_id=-100124, message_id=2)), 'duplicate')
         self.assertEqual(await self.engine.process(self.incoming(message_id=3, sender_id=56)), 'sent')
+        self.assertEqual([row[0] for row in self.sent], [55, 56])
 
     async def test_unselected_old_outgoing_bot_private_and_forwarded_are_ignored(self):
         for changes in [dict(chat_id=999), dict(timestamp=100), dict(outgoing=True), dict(is_bot=True), dict(is_group=False), dict(forwarded=True)]:
@@ -74,6 +78,51 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.store.get('active'))
         self.store.set('active', True)
         self.assertEqual(await self.engine.process(self.incoming()), 'duplicate')
+
+    async def test_anonymous_channel_and_missing_sender_never_receive_quotes(self):
+        for sender_id in (0, -123, -1000000000123):
+            with self.subTest(sender_id=sender_id):
+                self.assertEqual(await self.engine.process(self.incoming(sender_id=sender_id)), 'ignored')
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.store.recent(), [])
+
+    async def test_recipient_only_rejection_keeps_other_buyers_enabled(self):
+        attempts = []
+
+        async def send(recipient, source_message, text):
+            attempts.append((recipient, source_message))
+            if recipient == 55:
+                raise SendFailure('UserPrivacyRestrictedError', pause=False)
+            self.sent.append((recipient, source_message, text))
+
+        self.engine.send = send
+        self.assertEqual(await self.engine.process(self.incoming()), 'failed')
+        self.assertTrue(self.store.get('active'))
+        delivery = self.store.delivery(-100123, 1)
+        self.assertEqual((delivery['status'], delivery['detail']), ('failed', 'UserPrivacyRestrictedError'))
+        # Retrying the same source event never attempts a second private send.
+        self.assertEqual(await self.engine.process(self.incoming()), 'duplicate')
+        self.assertEqual(attempts, [(55, 1)])
+        self.assertEqual(await self.engine.process(self.incoming(sender_id=56, message_id=2)), 'sent')
+        self.assertEqual(self.sent[0][:2], (56, 2))
+
+    async def test_default_send_failure_still_pauses_all_replies(self):
+        async def send(*args):
+            raise SendFailure('flood_wait_30s')
+
+        self.engine.send = send
+        self.assertEqual(await self.engine.process(self.incoming()), 'failed')
+        self.assertFalse(self.store.get('active'))
+        self.assertEqual(self.store.delivery(-100123, 1)['status'], 'failed')
+
+    async def test_uncertain_send_always_pauses_even_if_nonpausing_was_requested(self):
+        async def send(*args):
+            raise SendFailure('timeout', uncertain=True, pause=False)
+
+        self.engine.send = send
+        self.assertEqual(await self.engine.process(self.incoming()), 'uncertain')
+        self.assertFalse(self.store.get('active'))
+        self.assertEqual(self.store.delivery(-100123, 1)['status'], 'uncertain')
 
     async def test_inventory_and_dedup_survive_restart(self):
         await self.engine.process(self.incoming())

@@ -19,7 +19,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
 from dotenv import load_dotenv
-from telethon import TelegramClient, events
+from telethon import TelegramClient, errors, events, types
 from telethon.errors import FloodWaitError, RPCError
 
 from .catalog import CatalogError, build_reply, inspect_request, parse_catalog
@@ -37,7 +37,7 @@ from .monitor_diagnostics import diagnose_chat, reason_label
 from .update_state import checkpoint_update_state, restore_channel_updates
 
 log = logging.getLogger(__name__)
-RELEASE = '2026-10-26-monitor'
+RELEASE = '2026-10-26-private-replies'
 
 
 @dataclass(frozen=True)
@@ -467,12 +467,32 @@ class Application:
             await message.answer(f'✅ Аккаунт подключён. Telegram ID: {self.auth.user.id}. Авторизация сохранена.\n'
                                  'Ответы пока выключены. Настрой /markup, выбери /chats и проверь /test. Включить: /run.', reply_markup=menu())
 
-    async def send_reply(self, chat_id: int, message_id: int, text: str):
+    async def send_reply(self, recipient_id: int, source_message_id: int, text: str):
+        # The source message ID belongs to the group. It must never be used
+        # as reply_to in a different dialog or as a fallback destination.
+        if recipient_id <= 0:
+            raise SendFailure('recipient_not_user', pause=False)
         try:
-            await asyncio.wait_for(self.client.send_message(chat_id, text, reply_to=message_id,
-                                                            parse_mode=None, link_preview=False), timeout=30)
-        except FloodWaitError as exc:
+            recipient = await asyncio.wait_for(self.client.get_input_entity(types.PeerUser(recipient_id)), 10)
+        except (FloodWaitError, errors.FloodPremiumWaitError) as exc:
             raise SendFailure(f'flood_wait_{exc.seconds}s') from exc
+        except ValueError as exc:
+            raise SendFailure('recipient_unavailable', pause=False) from exc
+        except RPCError as exc:
+            raise SendFailure(type(exc).__name__) from exc
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise SendFailure('recipient_lookup_' + type(exc).__name__, pause=False) from exc
+        if not isinstance(recipient, types.InputPeerUser) or recipient.user_id != recipient_id:
+            raise SendFailure('recipient_not_user', pause=False)
+        try:
+            await asyncio.wait_for(self.client.send_message(recipient, text, parse_mode=None,
+                                                            link_preview=False), timeout=30)
+        except (FloodWaitError, errors.FloodPremiumWaitError) as exc:
+            raise SendFailure(f'flood_wait_{exc.seconds}s') from exc
+        except (errors.UserPrivacyRestrictedError, errors.UserIsBlockedError,
+                errors.UserBlockedError, errors.YouBlockedUserError,
+                errors.InputUserDeactivatedError, errors.PremiumAccountRequiredError) as exc:
+            raise SendFailure(type(exc).__name__, pause=False) from exc
         except RPCError as exc:
             raise SendFailure(type(exc).__name__) from exc
         except (OSError, asyncio.TimeoutError) as exc:
@@ -510,7 +530,7 @@ class Application:
             if event.message.fwd_from:
                 record('forwarded')
                 return
-            if not event.sender_id:
+            if not event.sender_id or event.sender_id <= 0:
                 record('missing_sender')
                 return
             if not (event.raw_text or '').strip():
@@ -538,13 +558,19 @@ class Application:
             record(result)
             if result == 'sent':
                 title = self.store.chats().get(event.chat_id, str(event.chat_id))
-                await self.notify(f'✅ Ответ отправлен\nГруппа: {title}\nСообщение: {event.id}')
+                await self.notify(f'✅ Цена отправлена автору в личку\nПолучатель: {event.sender_id}\n'
+                                  f'Запрос из группы: {title}\nСообщение: {event.id}')
             elif result in {'failed', 'uncertain'}:
                 delivery = self.store.delivery(chat_id, message_id)
                 detail = delivery['detail'] if delivery else result
                 record(result, detail)
-                await self.notify(f'⏸ Ответы приостановлены. Результат: {result}; {detail}.\n'
-                                  'Проверь /tail. Для возобновления: /run. Повторной отправки этого сообщения не будет.')
+                if not self.store.get('active', False):
+                    await self.notify(f'⏸ Ответы приостановлены. Результат: {result}; {detail}.\n'
+                                      'Проверь /tail. Для возобновления: /run. Повторной отправки этого сообщения не будет.')
+                else:
+                    await self.notify(f'Не удалось отправить цену автору в личку. Причина: {detail}.\n'
+                                      f'Запрос: чат {chat_id}, сообщение {message_id}.\n'
+                                      'Ответы другим пользователям продолжаются. Подробности: /tail.')
         except Exception as exc:
             record('error', type(exc).__name__)
             log.error('Monitor error: %s', type(exc).__name__)
@@ -605,7 +631,7 @@ class Application:
                 f'Выбрано групп: {len(self.store.chats())}\n'
                 + self.monitor_status() + '\n' +
                 f"Названия без «куплю»: {'учитываются' if self.store.get('allow_bare', True) else 'пропускаются'}\n"
-                'Куда отвечаем: на исходное сообщение в группе, от подключённого аккаунта.\n'
+                'Куда отвечаем: в личку автору запроса, от подключённого аккаунта.\n'
                 f'Лимит: {self.config.max_per_minute} ответов в минуту.\n'
                 'Остаток не уменьшается при предложении товара.\n\n' +
                 format_policy(self.store.markup_policy()))
@@ -636,7 +662,7 @@ class Application:
                 self.store.set('monitor_enabled_at', int(time.time()))
             self.store.set('active', True)
             await message.answer('▶️ Ответы включены. Обрабатываю новые запросы в выбранных группах. '
-                                 'Проверка: /why. Остановить: /pause')
+                                 'Цены отправляются в личку автору запроса. Проверка: /why. Остановить: /pause')
 
     async def show_chats(self, message: Message, page: int = 0, refresh: bool = False, query: str | None = None):
         if not await self.require_account(message):
@@ -798,7 +824,7 @@ class Application:
         async def start(message: Message, state: FSMContext):
             self.cancel_login()
             await state.clear()
-            await message.answer('Бот отвечает по актуальному прайсу в выбранных группах.\n\n'
+            await message.answer('Бот находит запросы в выбранных группах и отправляет цены авторам в личку.\n\n'
                                  'Подключить аккаунт: /login — номер, код, затем пароль 2FA при необходимости.\n\n'
                                  '/loginqr — вход по QR через Telegram на телефоне, без запроса кода.\n\n'
                                  '1. /price — запросить прайс у поставщика; /uploadprice — загрузить вручную.\n'
@@ -903,7 +929,7 @@ class Application:
                 await self.show_test(message, text)
             else:
                 await state.set_state(Inputs.test)
-                await message.answer('Пришли пример запроса. Покажу результат без отправки в группы. Отмена: /cancel.')
+                await message.answer('Пришли пример запроса. Покажу результат без отправки покупателю. Отмена: /cancel.')
 
         @dp.message(Command('bare'))
         async def bare(message: Message):
@@ -952,7 +978,7 @@ class Application:
         @dp.message(Command('tail'))
         async def tail(message: Message):
             rows = self.store.recent()
-            labels = {'sent': 'отправлено', 'failed': 'ошибка', 'uncertain': 'неизвестно, проверь в группе', 'pending': 'отправляется'}
+            labels = {'sent': 'отправлено', 'failed': 'ошибка', 'uncertain': 'неизвестно, проверь личку с автором', 'pending': 'отправляется'}
             lines = [f"{labels.get(r['status'], r['status'])} | чат {r['chat_id']} | сообщение {r['message_id']} | {r['detail']}" for r in rows]
             await message.answer('\n'.join(lines) if lines else 'Отправок пока нет.')
 
@@ -1017,7 +1043,7 @@ class Application:
                 await self.import_price(message, state, '\n'.join(parts))
             elif action == 'test':
                 await state.set_state(Inputs.test)
-                await message.answer('Пришли пример запроса. Сообщения в группы не отправляются. Отмена: /cancel.')
+                await message.answer('Пришли пример запроса. Проверка ничего не отправляет покупателю. Отмена: /cancel.')
             elif action == 'markup':
                 await state.clear()
                 await self.show_markup(message)
