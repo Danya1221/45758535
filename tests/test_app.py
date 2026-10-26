@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -24,8 +25,8 @@ class LocalSession(BaseSession):
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
-        if method.__api_method__ in {'sendMessage', 'sendPhoto'}:
-            return Message(message_id=len(self.calls), date=datetime.now(timezone.utc),
+        if method.__api_method__ in {'sendMessage', 'sendPhoto', 'editMessageText'}:
+            return Message(message_id=getattr(method, 'message_id', None) or len(self.calls), date=datetime.now(timezone.utc),
                            chat=Chat(id=method.chat_id, type='private'), text=getattr(method, 'text', None)).as_(bot)
         return True
 
@@ -38,7 +39,7 @@ class LocalClient:
     def is_connected(self):
         return True
 
-    async def iter_dialogs(self):
+    async def iter_dialogs(self, **kwargs):
         yield SimpleNamespace(id=-100123, title='Закупки', is_group=True)
         yield SimpleNamespace(id=1, title='Личка', is_group=False)
 
@@ -55,6 +56,9 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.update_id = 0
 
     async def asyncTearDown(self):
+        task = self.app.group_directory.cancel()
+        if task:
+            await asyncio.gather(task, return_exceptions=True)
         await self.bot.session.close()
         self.store.close()
         self.temp.cleanup()
@@ -66,7 +70,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         await self.app.dp.feed_update(self.bot, Update(update_id=self.update_id, message=message))
 
     def texts(self):
-        return [m.text for m in self.transport.calls if m.__api_method__ == 'sendMessage']
+        return [m.text for m in self.transport.calls if m.__api_method__ in {'sendMessage', 'editMessageText'}]
 
     async def test_only_owner_private_messages_control_bot(self):
         await self.feed('/start', user_id=66)
@@ -100,6 +104,8 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_chat_picker_filters_private_dialogs_and_toggles(self):
         await self.feed('/chats')
+        if self.app.group_directory.task:
+            await self.app.group_directory.task
         self.assertIn('Группы: 1', self.texts()[-1])
         message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
         callback = CallbackQuery(id='123', from_user=User(id=55, is_bot=False, first_name='Test'),

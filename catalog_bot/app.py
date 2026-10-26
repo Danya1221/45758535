@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import logging
+import math
 import os
 import time
 from datetime import datetime
@@ -12,7 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -31,6 +32,7 @@ from .sessions import load_string_session, persist_session
 from .account_login import AccountLogin, LoginError
 from .login_qr import qr_png
 from .price_schedule import PriceSchedule
+from .group_directory import GroupDirectory
 
 log = logging.getLogger(__name__)
 
@@ -148,13 +150,16 @@ class Application:
         self.dp = Dispatcher()
         self.dp.message.outer_middleware(OwnerOnly(config.owner_id))
         self.dp.callback_query.outer_middleware(OwnerOnly(config.owner_id))
-        self.dialogs: list[tuple[int, str]] = []
-        self.dialogs_loaded = False
         self.account_available = asyncio.Event()
         self.account_changed = asyncio.Event()
         self.refresh_requested = asyncio.Event()
         self.auth = AccountLogin(client, config.data_dir, self.account_ready)
         self.qr_task: asyncio.Task | None = None
+        self.chat_ui_lock = asyncio.Lock()
+        self.chat_origin = self.chat_panel = None
+        self.chat_page = 0
+        self.chat_signature = None
+        self.group_directory = GroupDirectory(store, client, self.account_available, self.update_chats_panel)
         self.price_schedule = PriceSchedule(store, config.price_interval)
         self.engine = Engine(store, self.send_reply, max_per_minute=config.max_per_minute,
                              dedup_seconds=config.dedup_seconds, contact=config.contact)
@@ -165,9 +170,9 @@ class Application:
         self.register_handlers()
 
     async def account_ready(self, user):
+        self.group_directory.bind(int(user.id))
         self.store.set('telegram_account_id', int(user.id))
         self.store.set('telegram_account_name', getattr(user, 'username', None) or getattr(user, 'first_name', None) or str(user.id))
-        self.dialogs_loaded = False
         if self.price_sync:
             self.price_sync.peer = None
             self.store.set('price_ready', False)
@@ -182,6 +187,7 @@ class Application:
         if self.price_sync:
             self.store.set('price_ready', False)
         if authorization_lost:
+            self.group_directory.cancel()
             self.auth.ready, self.auth.user = False, None
             self.store.set('active', False)
 
@@ -522,34 +528,70 @@ class Application:
     async def show_chats(self, message: Message, page: int = 0, refresh: bool = False):
         if not await self.require_account(message):
             return
-        if refresh or not self.dialogs_loaded:
+        async with self.chat_ui_lock:
+            same_origin = self.chat_origin and self.chat_origin.message_id == message.message_id
+            same_panel = self.chat_panel and self.chat_panel.message_id == message.message_id
+            if not same_origin and not same_panel:
+                self.chat_origin, self.chat_panel, self.chat_signature = message, None, None
+            self.chat_page = page
+            task = self.group_directory.ensure_started(refresh=refresh)
+            await self.render_chats_panel()
+        # Tiny/local lists can finish immediately; network scans keep running
+        # behind the visible progress panel instead of blocking the command.
+        if task and not self.group_directory.items:
             try:
-                self.dialogs = [(d.id, d.title) async for d in self.client.iter_dialogs() if d.is_group]
-                self.dialogs_loaded = True
-            except FloodWaitError as exc:
-                await message.answer(f'Telegram просит подождать {exc.seconds} секунд. Попробуй /chats позже.')
-                return
-            except (RPCError, OSError):
-                await message.answer('Не удалось получить группы. Проверь соединение аккаунта и повтори /chats.')
-                return
-        page = min(max(0, page), max(0, (len(self.dialogs) - 1) // 8))
+                await asyncio.wait_for(asyncio.shield(task), .15)
+            except asyncio.TimeoutError:
+                pass
+
+    async def update_chats_panel(self):
+        async with self.chat_ui_lock:
+            if self.chat_origin is not None:
+                await self.render_chats_panel()
+
+    async def render_chats_panel(self):
+        directory = self.group_directory
+        dialogs = list(directory.items.items())
+        page = min(max(0, self.chat_page), max(0, (len(dialogs) - 1) // 8))
+        self.chat_page = page
         selected = self.store.chats()
         rows = [[(f"{'✅' if cid in selected else '⬜'} {title[:44]}", f'toggle:{page}:{cid}')]
-                for cid, title in self.dialogs[page*8:page*8+8]]
+                for cid, title in dialogs[page*8:page*8+8]]
         nav = []
         if page:
             nav.append(('←', f'chats:{page-1}'))
-        if (page+1)*8 < len(self.dialogs):
+        if (page+1)*8 < len(dialogs):
             nav.append(('→', f'chats:{page+1}'))
         if nav:
             rows.append(nav)
         rows.append([('🔄 Обновить', 'refresh'), ('Меню', 'home')])
-        text = (f'💬 Группы: {len(self.dialogs)}. Выбрано: {len(selected)}. Страница {page+1}.\n'
+        text = (f'💬 Группы: {len(dialogs)}. Выбрано: {len(selected)}. Страница {page+1}.\n'
+                f"Аккаунт: {self.store.get('telegram_account_name', 'подключён')}\n"
                 'Нажми на группу, чтобы включить или выключить её.\n'
                 'Сообщения без «куплю»: /bare on или /bare off.')
-        if not self.dialogs:
+        wait = max(0, math.ceil(directory.retry_at - directory.clock()))
+        if directory.loading:
+            text += ('\n\nПродолжу загрузку автоматически через ' + str(wait) + ' сек.'
+                     if wait else '\n\nЗагружаю список групп… Он появится здесь автоматически.')
+            if dialogs:
+                text += '\nУже найденные группы можно выбирать сейчас.'
+        elif directory.error:
+            text += '\n\n' + directory.error
+        elif directory.complete and not dialogs:
             text += '\nПодключённый аккаунт пока не состоит в группах.'
-        await message.answer(text, reply_markup=keyboard(rows))
+        markup = keyboard(rows)
+        signature = (text, markup.model_dump_json())
+        if self.chat_panel is not None and signature == self.chat_signature:
+            return
+        if self.chat_panel is not None:
+            try:
+                await self.chat_panel.edit_text(text, reply_markup=markup, parse_mode=None)
+                self.chat_signature = signature
+                return
+            except TelegramBadRequest:
+                self.chat_panel = None
+        self.chat_panel = await self.chat_origin.answer(text, reply_markup=markup, parse_mode=None)
+        self.chat_signature = signature
 
     async def show_markup(self, message: Message):
         categories = '\n'.join(f'{key} — {label}' for key, label in CATEGORIES.items())
@@ -697,7 +739,8 @@ class Application:
 
         @dp.message(Command('chats'))
         async def chats(message: Message):
-            await self.show_chats(message, refresh=True)
+            value = (message.text or '').partition(' ')[2].strip().lower()
+            await self.show_chats(message, refresh=value in {'refresh', 'обновить'})
 
         @dp.message(Command('run'))
         async def run(message: Message):
@@ -851,7 +894,7 @@ class Application:
                 await self.show_chats(message, int(action.split(':')[1]))
             elif action.startswith('toggle:'):
                 _, page, chat_id = action.split(':')
-                title = dict(self.dialogs).get(int(chat_id))
+                title = self.group_directory.items.get(int(chat_id))
                 if title is None:
                     await message.answer('Список групп устарел. Обнови /chats.')
                     return
@@ -995,6 +1038,9 @@ async def run(config: Config):
             task.result()
     finally:
         if app is not None:
+            group_task = app.group_directory.cancel()
+            if group_task is not None:
+                tasks.append(group_task)
             qr_task = app.cancel_login()
             if qr_task is not None:
                 tasks.append(qr_task)

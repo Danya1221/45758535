@@ -31,6 +31,9 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.update_id = 0
 
     async def asyncTearDown(self):
+        task = self.app.group_directory.cancel()
+        if task:
+            await asyncio.gather(task, return_exceptions=True)
         await self.bot.session.close()
         self.client.session.close()
         self.store.close()
@@ -63,6 +66,8 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.store.get('active', False))
         self.assertTrue(any(call.__api_method__ == 'deleteMessage' for call in self.transport.calls))
         await self.feed('/chats')
+        if self.app.group_directory.task:
+            await self.app.group_directory.task
         self.assertIn('Группы: 1', self.texts()[-1])
         await self.feed('/login')
         self.assertIn('уже подключён', self.texts()[-1])

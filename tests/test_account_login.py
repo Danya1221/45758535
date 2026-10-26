@@ -60,7 +60,7 @@ class AccountClient:
         self.authorized = True
         return self.user
 
-    async def iter_dialogs(self):
+    async def iter_dialogs(self, **kwargs):
         yield SimpleNamespace(id=-100123, title='Тестовая группа', is_group=True)
 
 
