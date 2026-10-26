@@ -639,20 +639,18 @@ def money(price: Decimal) -> str:
     return f"{price:,.2f}".replace(",", " ").removesuffix(".00").replace(".", ",") + " ₽"
 
 
-def build_reply(products: list[Product], intro: str | None = None, contact: str = "", limit: int = 5) -> str:
+def build_reply(products: list[Product], intro: str | None = None, contact: str = "") -> str:
     unknown_stock = any(p.stock is None for p in products)
     if intro == 'По актуальному прайсу:' or (unknown_stock and intro == 'Есть в наличии:'):
         intro = ''
     elif intro is None:
         intro = '' if unknown_stock else 'Есть в наличии:'
     lines = [intro] if intro else []
-    for product in products[:limit]:
+    for product in products:
         price = f" — {money(product.price)}" if product.price is not None else ""
         region = f' {product.country or product.price_country}' if product.country or product.price_country else ''
         quantity = f' (от {product.min_qty} шт)' if product.min_qty > 1 else ''
         lines.append(f"• {product.name}{region}{price}{quantity}")
-    if len(products) > limit:
-        lines.append(f"Ещё вариантов: {len(products) - limit}.")
     if contact:
         lines.extend(("", contact))
     return "\n".join(lines)

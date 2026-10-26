@@ -102,6 +102,16 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(build_reply([product], 'Предложение:', '@seller'),
                          'Предложение:\n• Galaxy S25 12/256 Navy — 49 000 ₽\n\n@seller')
 
+    def test_reply_contains_all_seven_matching_variants_without_hidden_counter(self):
+        variants = ['12/512 Black', '12/512 Gray', '12/512 Whitesilver', '12/512 Silverblue',
+                    '12/1TB Black', '12/1TB Gray', '12/1TB Whitesilver']
+        products = [Product('Galaxy S25 Ultra ' + variant, Decimal('69800'), None) for variant in variants]
+        reply = build_reply(products)
+        self.assertEqual(reply.count('• '), 7)
+        self.assertNotIn('Ещё вариантов', reply)
+        self.assertEqual([line.split(' — ')[0] for line in reply.splitlines()],
+                         ['• ' + p.name for p in products])
+
 
 class ImportTests(unittest.TestCase):
     def test_headers_csv_and_decimal(self):

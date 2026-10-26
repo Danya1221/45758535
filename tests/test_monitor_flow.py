@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -13,7 +14,7 @@ from telethon import TelegramClient, errors, events, types
 from telethon.sessions import MemorySession
 
 from catalog_bot.app import Application, Config
-from catalog_bot.catalog import parse_catalog
+from catalog_bot.catalog import Product, build_reply, parse_catalog
 from catalog_bot.storage import Store
 from tests import test_app as helpers
 
@@ -208,3 +209,51 @@ class MonitorFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.delivery(-123, 28)['detail'], 'flood_wait_25s')
         self.assertEqual(self.client.send_message.await_count, 1)
         self.assertIsInstance(self.client.send_message.await_args.args[0], types.InputPeerUser)
+
+    def many_offers(self):
+        products = [Product('Galaxy S25 Ultra 12/512 Black', Decimal(69800 + index), None,
+                            sku=f'OFFER{index}', country='🇨🇱') for index in range(120)]
+        self.store.replace_products(products)
+        return products
+
+    async def test_all_matches_are_delivered_in_private_parts_once_without_losing_rows(self):
+        products = self.many_offers()
+        event = self.update('S25 Ultra', number=40)
+        with patch('catalog_bot.app.asyncio.sleep', new_callable=AsyncMock):
+            await self.client._dispatch_update(event)
+        calls = self.client.send_message.await_args_list
+        self.assertGreater(len(calls), 1)
+        self.assertEqual(''.join(call.args[1] for call in calls), build_reply(products, self.store.get('intro')))
+        self.assertTrue(all(len(call.args[1].encode('utf-16-le')) // 2 <= 4000 for call in calls))
+        self.assertTrue(all(call.args[0] == types.InputPeerUser(88, 800) and 'reply_to' not in call.kwargs for call in calls))
+        self.assertEqual(self.store.delivery(-123, 40)['status'], 'sent')
+        self.assertEqual(self.store.sent_since(0), 1)
+        count = self.client.send_message.await_count
+        await self.client._dispatch_update(event)
+        self.assertEqual(self.client.send_message.await_count, count)
+
+    async def test_interrupted_second_part_records_partial_send_and_never_replays_first_part(self):
+        self.many_offers()
+        self.client.send_message.side_effect = [None, OSError('private network detail')]
+        with patch('catalog_bot.app.asyncio.sleep', new_callable=AsyncMock):
+            await self.client._dispatch_update(self.update('S25 Ultra', number=41))
+        delivery = self.store.delivery(-123, 41)
+        self.assertEqual(delivery['status'], 'uncertain')
+        self.assertTrue(delivery['detail'].startswith('partial_1_of_'))
+        self.assertIn('OSError', delivery['detail'])
+        self.assertNotIn('private network detail', delivery['detail'])
+        self.assertFalse(self.store.get('active'))
+        self.assertEqual(self.client.send_message.await_count, 2)
+        self.store.set('active', True)
+        await self.client._dispatch_update(self.update('S25 Ultra', number=41))
+        self.assertEqual(self.client.send_message.await_count, 2)
+
+    async def test_test_command_previews_every_match_across_messages(self):
+        products = self.many_offers()
+        await self.feed('/test S25 Ultra')
+        pieces = self.texts()
+        self.assertGreater(len(pieces), 1)
+        self.assertIn('Совпадений: 120', ''.join(pieces))
+        self.assertTrue(''.join(pieces).endswith(build_reply(products, self.store.get('intro'))))
+        self.assertNotIn('Ещё вариантов', ''.join(pieces))
+        self.client.send_message.assert_not_awaited()

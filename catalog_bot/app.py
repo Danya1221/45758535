@@ -35,9 +35,10 @@ from .price_schedule import PriceSchedule
 from .group_directory import GroupDirectory, search_groups
 from .monitor_diagnostics import diagnose_chat, reason_label
 from .update_state import checkpoint_update_state, restore_channel_updates
+from .message_chunks import split_messages
 
 log = logging.getLogger(__name__)
-RELEASE = '2026-10-26-private-replies'
+RELEASE = '2026-10-26-all-matches'
 
 
 @dataclass(frozen=True)
@@ -484,19 +485,30 @@ class Application:
             raise SendFailure('recipient_lookup_' + type(exc).__name__, pause=False) from exc
         if not isinstance(recipient, types.InputPeerUser) or recipient.user_id != recipient_id:
             raise SendFailure('recipient_not_user', pause=False)
+        parts = split_messages(text)
+        sent_parts = 0
+
+        def failure(reason, *, uncertain=False, pause=True):
+            prefix = f'partial_{sent_parts}_of_{len(parts)}_parts;' if sent_parts else ''
+            return SendFailure(prefix + reason, uncertain=uncertain, pause=pause)
+
         try:
-            await asyncio.wait_for(self.client.send_message(recipient, text, parse_mode=None,
-                                                            link_preview=False), timeout=30)
+            for part in parts:
+                if sent_parts:
+                    await asyncio.sleep(1)
+                await asyncio.wait_for(self.client.send_message(recipient, part, parse_mode=None,
+                                                                link_preview=False), timeout=30)
+                sent_parts += 1
         except (FloodWaitError, errors.FloodPremiumWaitError) as exc:
-            raise SendFailure(f'flood_wait_{exc.seconds}s') from exc
+            raise failure(f'flood_wait_{exc.seconds}s') from exc
         except (errors.UserPrivacyRestrictedError, errors.UserIsBlockedError,
                 errors.UserBlockedError, errors.YouBlockedUserError,
                 errors.InputUserDeactivatedError, errors.PremiumAccountRequiredError) as exc:
-            raise SendFailure(type(exc).__name__, pause=False) from exc
+            raise failure(type(exc).__name__, pause=False) from exc
         except RPCError as exc:
-            raise SendFailure(type(exc).__name__) from exc
+            raise failure(type(exc).__name__) from exc
         except (OSError, asyncio.TimeoutError) as exc:
-            raise SendFailure(type(exc).__name__, uncertain=True) from exc
+            raise failure(type(exc).__name__, uncertain=True) from exc
 
     async def notify(self, text: str):
         try:
@@ -788,7 +800,8 @@ class Application:
         else:
             text_out += ('\nОтвета не будет. Проверь модель, версию, память, цвет, SIM и остаток. '
                          'Характеристика из запроса должна быть указана у товара. Для артикула заполни столбец «Артикул».')
-        await message.answer(text_out[:4000], parse_mode=None)
+        for part in split_messages(text_out):
+            await message.answer(part, parse_mode=None)
 
     async def import_catalog(self, message: Message, state: FSMContext, text: str):
         try:
