@@ -31,6 +31,7 @@ class AccountClient:
     async def disconnect(self): self.connected = False
     async def is_user_authorized(self): return self.authorized
     async def get_me(self): return self.user if self.authorized else None
+    async def set_receive_updates(self, enabled): self.receive_updates = enabled
     def add_event_handler(self, *args): self.handlers.append(args)
 
     async def __call__(self, request):

@@ -39,6 +39,9 @@ class LocalClient:
     def is_connected(self):
         return True
 
+    async def set_receive_updates(self, enabled):
+        self.receive_updates = enabled
+
     async def iter_dialogs(self, **kwargs):
         yield SimpleNamespace(id=-100123, title='Закупки', is_group=True)
         yield SimpleNamespace(id=1, title='Личка', is_group=False)

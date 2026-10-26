@@ -33,8 +33,11 @@ from .account_login import AccountLogin, LoginError
 from .login_qr import qr_png
 from .price_schedule import PriceSchedule
 from .group_directory import GroupDirectory, search_groups
+from .monitor_diagnostics import diagnose_chat, reason_label
+from .update_state import checkpoint_update_state, restore_channel_updates
 
 log = logging.getLogger(__name__)
+RELEASE = '2026-10-26-monitor'
 
 
 @dataclass(frozen=True)
@@ -130,7 +133,7 @@ def menu():
         [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats_all')],
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
-        [('💸 Наценка', 'markup')],
+        [('💸 Наценка', 'markup'), ('🔧 Почему нет ответа', 'why')],
         [('▶️ Включить ответы', 'run'), ('⏸ Пауза', 'pause')],
     ])
 
@@ -160,6 +163,8 @@ class Application:
         self.chat_origin = self.chat_panel = None
         self.chat_page = 0
         self.chat_query = ''
+        self.monitor_started_at = time.time()
+        self.updates_checked = False
         self.chat_signature = None
         self.group_directory = GroupDirectory(store, client, self.account_available, self.update_chats_panel)
         self.price_schedule = PriceSchedule(store, config.price_interval)
@@ -172,6 +177,9 @@ class Application:
         self.register_handlers()
 
     async def account_ready(self, user):
+        self.updates_checked = False
+        await restore_channel_updates(self.client, int(user.id))
+        await checkpoint_update_state(self.client)
         if self.group_directory.account_id != int(user.id):
             self.chat_query, self.chat_page = '', 0
         self.group_directory.bind(int(user.id))
@@ -186,6 +194,7 @@ class Application:
         self.refresh_requested.set()
 
     def account_unavailable(self, *, authorization_lost=False):
+        self.updates_checked = False
         self.account_available.clear()
         self.refresh_requested.set()
         if self.price_sync:
@@ -476,30 +485,116 @@ class Application:
             log.warning('Owner notification failed: %s', type(exc).__name__)
 
     async def monitor(self, event):
-        if (not self.auth.ready or not self.account_available.is_set() or event.out or not event.is_group
-                or event.chat_id not in self.store.chats() or not self.store.get('active', False)):
+        if event.chat_id not in self.store.chats():
             return
+        chat_id, message_id = event.chat_id, event.id
+        def record(result, detail=''):
+            self.store.record_check(chat_id, message_id, result, detail)
         try:
-            sender = await event.get_sender()
+            record('received')
+            if not self.auth.ready or not self.account_available.is_set():
+                record('account_unavailable')
+                return
+            if event.out:
+                record('own_message')
+                return
+            if not event.is_group:
+                record('not_group')
+                return
+            if not self.store.get('active', False):
+                record('paused')
+                return
+            if event.date.timestamp() < self.store.get('monitor_enabled_at', 0):
+                record('before_enable')
+                return
+            if event.message.fwd_from:
+                record('forwarded')
+                return
+            if not event.sender_id:
+                record('missing_sender')
+                return
+            if not (event.raw_text or '').strip():
+                record('empty')
+                return
+            if len(event.raw_text) > 12000:
+                record('too_long')
+                return
+            try:
+                sender = await asyncio.wait_for(event.get_sender(), 10)
+            except (RPCError, OSError, asyncio.TimeoutError) as exc:
+                # A sender lookup failure must not silently disable all groups.
+                record('sender_unavailable', type(exc).__name__)
+                return
+            if sender is None:
+                record('sender_unavailable')
+                return
             message = Incoming(event.chat_id, event.id, event.sender_id or 0, event.raw_text or '',
                                event.date.timestamp(), outgoing=event.out, is_bot=bool(getattr(sender, 'bot', False)),
                                is_group=event.is_group, forwarded=bool(event.message.fwd_from))
             result = await self.engine.process(message)
+            if result == 'ignored':
+                result = ('bot' if message.is_bot else 'forwarded' if message.forwarded
+                          else 'empty' if not message.text.strip() else 'ignored')
+            record(result)
             if result == 'sent':
                 title = self.store.chats().get(event.chat_id, str(event.chat_id))
                 await self.notify(f'✅ Ответ отправлен\nГруппа: {title}\nСообщение: {event.id}')
             elif result in {'failed', 'uncertain'}:
-                detail = self.store.recent()[0]['detail']
+                delivery = self.store.delivery(chat_id, message_id)
+                detail = delivery['detail'] if delivery else result
+                record(result, detail)
                 await self.notify(f'⏸ Ответы приостановлены. Результат: {result}; {detail}.\n'
                                   'Проверь /tail. Для возобновления: /run. Повторной отправки этого сообщения не будет.')
         except Exception as exc:
+            record('error', type(exc).__name__)
             log.error('Monitor error: %s', type(exc).__name__)
             self.store.set('active', False)
             await self.notify('⏸ Ответы приостановлены из-за ошибки обработки. Проверь журналы приложения.')
 
+    def monitor_status(self):
+        rows = self.store.latest_checks(selected_only=True)
+        if not rows:
+            return 'События выбранных групп пока не получены. Проверить: /why.'
+        row = rows[0]
+        stamp = datetime.fromtimestamp(row['observed'], ZoneInfo('Europe/Moscow')).strftime('%H:%M:%S МСК')
+        title = self.store.chats().get(row['chat_id'], str(row['chat_id']))
+        return f"Последнее событие: {stamp}, {title[:80]}, №{row['message_id']} — {reason_label(row['result'])}."
+
+    async def show_why(self, message: Message, chat_id: int | None = None, page: int = 0):
+        chats = self.store.chats()
+        if not chats:
+            await message.answer('Сначала выбери группы: /chats.')
+            return
+        if chat_id is not None and chat_id not in chats:
+            await message.answer('Эта группа не выбрана. Проверь /chats.')
+            return
+        if chat_id is None and len(chats) == 1:
+            chat_id = next(iter(chats))
+        if chat_id is None:
+            rows = list(chats.items())
+            page = max(0, min(page, (len(rows) - 1) // 8))
+            buttons = [[(title[:70], f'why_chat:{cid}')] for cid, title in rows[page * 8:(page + 1) * 8]]
+            navigation = []
+            if page:
+                navigation.append(('←', f'why_page:{page - 1}'))
+            if (page + 1) * 8 < len(rows):
+                navigation.append(('→', f'why_page:{page + 1}'))
+            if navigation:
+                buttons.append(navigation)
+            await message.answer('Выбери группу для проверки последних сообщений:', reply_markup=keyboard(buttons))
+            return
+        if not await self.require_account(message):
+            return
+        text = await diagnose_chat(self.client, self.store, chat_id,
+                                   account_ready=self.auth.ready and self.account_available.is_set(),
+                                   max_age=self.engine.max_age, monitor_started_at=self.monitor_started_at)
+        await message.answer(text, parse_mode=None, reply_markup=keyboard([
+            [('🔄 Проверить ещё раз', f'why_chat:{chat_id}')], [('Меню', 'home')]]))
+
     def status(self) -> str:
         products = self.store.products()
         return ('📊 Статус\n'
+                f'Версия: {RELEASE}\n'
                 f"Аккаунт: {self.store.get('telegram_account_name', 'подключён') if self.auth.ready else 'не подключён — /login'}\n"
                 f"Соединение: {'есть' if self.account_available.is_set() and self.client.is_connected() else 'нет'}\n"
                 f"Ответы: {'включены' if self.store.get('active', False) else 'пауза'}\n"
@@ -508,6 +603,7 @@ class Application:
                 f"Источник: {self.config.price_bot or 'ручная загрузка'}\n"
                 f'{self.price_timer_status()}\n'
                 f'Выбрано групп: {len(self.store.chats())}\n'
+                + self.monitor_status() + '\n' +
                 f"Названия без «куплю»: {'учитываются' if self.store.get('allow_bare', True) else 'пропускаются'}\n"
                 'Куда отвечаем: на исходное сообщение в группе, от подключённого аккаунта.\n'
                 f'Лимит: {self.config.max_per_minute} ответов в минуту.\n'
@@ -526,8 +622,21 @@ class Application:
         elif not self.client.is_connected():
             await message.answer('Нет соединения с аккаунтом Telegram. Ответы не включены.')
         else:
+            if not self.updates_checked:
+                try:
+                    await asyncio.wait_for(self.client.set_receive_updates(True), 20)
+                    self.updates_checked = True
+                except (RPCError, OSError, asyncio.TimeoutError) as exc:
+                    self.store.set('active', False)
+                    await message.answer('Не удалось включить получение сообщений Telegram. '
+                                         f'Причина: {type(exc).__name__}. Повтори /run позже.')
+                    return
+            if not self.store.get('active', False):
+                # Telegram message dates have whole-second precision.
+                self.store.set('monitor_enabled_at', int(time.time()))
             self.store.set('active', True)
-            await message.answer('▶️ Ответы включены. Обрабатываю новые запросы в выбранных группах. Остановить: /pause')
+            await message.answer('▶️ Ответы включены. Обрабатываю новые запросы в выбранных группах. '
+                                 'Проверка: /why. Остановить: /pause')
 
     async def show_chats(self, message: Message, page: int = 0, refresh: bool = False, query: str | None = None):
         if not await self.require_account(message):
@@ -697,7 +806,8 @@ class Application:
                                  '2. /markup — настроить наценку.\n3. /chats — выбрать группы.\n'
                                  '4. /test — проверить запрос.\n5. /run — включить ответы.\n\n'
                                  '/pause — остановить; /status — статус; /stock — текущий список; '
-                                 '/bare — запросы без «куплю»; /intro — начало ответа; /tail — последние отправки.', reply_markup=menu())
+                                 '/bare — запросы без «куплю»; /intro — начало ответа; /tail — последние отправки; '
+                                 '/why — почему нет ответа в группе.', reply_markup=menu())
 
         @dp.message(Command('login'))
         async def login_account(message: Message, state: FSMContext):
@@ -758,6 +868,11 @@ class Application:
         @dp.message(Command('status'))
         async def status(message: Message):
             await message.answer(self.status(), reply_markup=menu())
+
+        @dp.message(Command('why'))
+        async def why(message: Message, state: FSMContext):
+            await state.clear()
+            await self.show_why(message)
 
         @dp.message(Command('chats'))
         async def chats(message: Message, state: FSMContext):
@@ -908,6 +1023,13 @@ class Application:
                 await self.show_markup(message)
             elif action == 'status':
                 await message.answer(self.status(), reply_markup=menu())
+            elif action == 'why':
+                await state.clear()
+                await self.show_why(message)
+            elif action.startswith('why_chat:'):
+                await self.show_why(message, chat_id=int(action.split(':', 1)[1]))
+            elif action.startswith('why_page:'):
+                await self.show_why(message, page=int(action.split(':', 1)[1]))
             elif action == 'home':
                 self.cancel_login()
                 await state.clear()
@@ -1056,7 +1178,9 @@ async def run(config: Config):
             session_path.chmod(0o600)
         bot = Bot(config.bot_token)
         app = Application(config, store, client, bot)
-        client.add_event_handler(app.monitor, events.NewMessage(incoming=True))
+        # Own messages are observed for diagnostics, but monitor/Engine never
+        # answer them. This makes self-tests distinguishable from lost updates.
+        client.add_event_handler(app.monitor, events.NewMessage())
         if app.price_sync:
             client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
             client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
@@ -1067,6 +1191,7 @@ async def run(config: Config):
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
             ('markup', 'Наценка по категориям'),
             ('test', 'Проверить запрос'), ('run', 'Включить ответы'), ('pause', 'Пауза'),
+            ('why', 'Почему нет ответа в группе'),
             ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки')]])
         store.prune()
         await app.notify('Бот запущен. Проверяю сохранённый вход. Статус: /status. Войти при необходимости: /login.')

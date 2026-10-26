@@ -33,6 +33,11 @@ class Store:
                 PRIMARY KEY(chat_id, message_id)
             );
             CREATE INDEX IF NOT EXISTS dedup_requests ON deliveries(sender_id, request_key, created);
+            CREATE TABLE IF NOT EXISTS message_checks (
+                chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+                observed REAL NOT NULL, result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(chat_id, message_id)
+            );
             CREATE TABLE IF NOT EXISTS price_runs (
                 id INTEGER PRIMARY KEY, created REAL NOT NULL, source TEXT NOT NULL,
                 complete INTEGER NOT NULL, product_count INTEGER NOT NULL, summary TEXT NOT NULL
@@ -202,6 +207,33 @@ class Store:
 
     def recent(self) -> list[dict]:
         return [dict(row) for row in self.db.execute("SELECT chat_id,message_id,status,detail,created FROM deliveries ORDER BY created DESC LIMIT 10")]
+
+    def delivery(self, chat_id: int, message_id: int):
+        row = self.db.execute('SELECT * FROM deliveries WHERE chat_id=? AND message_id=?', (chat_id, message_id)).fetchone()
+        return dict(row) if row else None
+
+    def record_check(self, chat_id: int, message_id: int, result: str, detail: str = ''):
+        # Keep metadata only: no message text, phone, login code or password.
+        self.db.execute('''INSERT INTO message_checks VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id, message_id) DO UPDATE SET
+            observed=CASE WHEN message_checks.result='sent' THEN message_checks.observed ELSE excluded.observed END,
+            result=CASE WHEN message_checks.result='sent' THEN 'sent' ELSE excluded.result END,
+            detail=CASE WHEN message_checks.result='sent' THEN message_checks.detail ELSE excluded.detail END''',
+            (chat_id, message_id, time.time(), result, detail[:120]))
+        self.db.execute('''DELETE FROM message_checks WHERE rowid IN
+            (SELECT rowid FROM message_checks ORDER BY observed DESC, rowid DESC LIMIT -1 OFFSET 300)''')
+
+    def message_check(self, chat_id: int, message_id: int):
+        row = self.db.execute('SELECT * FROM message_checks WHERE chat_id=? AND message_id=?', (chat_id, message_id)).fetchone()
+        return dict(row) if row else None
+
+    def latest_checks(self, chat_id: int | None = None, *, selected_only: bool = False):
+        if selected_only:
+            return [dict(row) for row in self.db.execute('''SELECT message_checks.* FROM message_checks
+                JOIN chats ON chats.id=message_checks.chat_id
+                ORDER BY observed DESC, message_checks.rowid DESC LIMIT 5''')]
+        rows = self.db.execute('SELECT * FROM message_checks WHERE chat_id=? ORDER BY observed DESC, rowid DESC LIMIT 5', (chat_id,)) if chat_id is not None else self.db.execute('SELECT * FROM message_checks ORDER BY observed DESC, rowid DESC LIMIT 5')
+        return [dict(row) for row in rows]
 
     def prune(self):
         self.db.execute("DELETE FROM deliveries WHERE created<? AND status IN ('sent','failed','cancelled')", (time.time() - 30*86400,))

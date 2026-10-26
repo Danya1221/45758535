@@ -7,6 +7,8 @@ import unicodedata
 
 from telethon.errors import FloodWaitError, FloodPremiumWaitError
 
+from .update_state import checkpoint_update_state
+
 log = logging.getLogger(__name__)
 
 
@@ -72,6 +74,16 @@ class GroupDirectory:
                 'complete': self.complete, 'updated_at': self.updated_at, 'retry_at': self.retry_at,
             })
 
+    async def checkpoint(self, generation):
+        if generation != self.generation:
+            return
+        try:
+            await checkpoint_update_state(self.client)
+        except Exception as exc:
+            # A failed SDK checkpoint must not discard discovered groups or
+            # turn a complete/partial picker into an empty list.
+            log.warning('Telegram update state checkpoint failed: %s', type(exc).__name__)
+
     def ensure_started(self, *, refresh=False):
         if self.task and not self.task.done():
             return self.task
@@ -114,6 +126,7 @@ class GroupDirectory:
                         return
                     self.retry_at = max(self.retry_at, self.clock() + max(1, exc.seconds))
                     self.save()
+                    await self.checkpoint(generation)
                     await self.changed(force=True)
                     continue  # Resume this iterator, retaining its page offset.
                 except StopAsyncIteration:
@@ -123,6 +136,7 @@ class GroupDirectory:
                     self.complete, self.loading = True, False
                     self.updated_at, self.retry_at = self.clock(), 0
                     self.save()
+                    await self.checkpoint(generation)
                     await self.changed(force=True)
                     return
                 if generation != self.generation:
@@ -133,6 +147,7 @@ class GroupDirectory:
                     self.items[cid] = title
                     if len(fresh) % 25 == 0:
                         self.save()
+                        await self.checkpoint(generation)
                     await self.changed(force=len(fresh) in (1, 8))
         except asyncio.CancelledError:
             if generation == self.generation:
