@@ -243,18 +243,18 @@ class AccountLogin:
         if isinstance(exc, errors.PhoneCodeExpiredError):
             self.cancel()
             raise failure('Код истёк. Начни заново: /login', restart=True) from None
-        if isinstance(exc, (errors.AuthKeyUnregisteredError, errors.SessionRevokedError, errors.SessionExpiredError)):
+        if isinstance(exc, (errors.AuthKeyUnregisteredError, errors.SessionRevokedError,
+                            errors.SessionExpiredError, errors.AuthKeyDuplicatedError)):
             self.cancel()
             self.ready, self.user = False, None
             await self.client.disconnect()
             self.client.session.auth_key = None
             self.client.session.save()
-            raise failure('Предыдущая авторизация недействительна. Начни заново: /login', restart=True) from None
+            message = _RESTART_MESSAGES.get(type(exc), 'Предыдущая авторизация недействительна. Начни заново: /login')
+            raise failure(message, restart=True) from None
         message = _RESTART_MESSAGES.get(type(exc))
         if message:
             self.cancel()
-            if isinstance(exc, errors.AuthKeyDuplicatedError):
-                self.ready, self.user = False, None
             raise failure(message, restart=True) from None
         if isinstance(exc, errors.ServerError):
             raise failure('Временная ошибка на стороне Telegram. Попробуй повторить ввод позднее.') from None

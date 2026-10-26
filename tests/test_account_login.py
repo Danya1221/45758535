@@ -264,6 +264,22 @@ class AccountLoginTests(unittest.IsolatedAsyncioTestCase):
         for secret in secrets:
             self.assertNotIn(secret, output)
 
+    async def test_duplicated_auth_key_is_discarded_before_new_login(self):
+        await self.auth.begin()
+        self.client.session.auth_key = AuthKey(bytes(reversed(range(256))))
+        self.client.send_error = errors.AuthKeyDuplicatedError(request=None)
+        with self.assertLogs('catalog_bot.account_login', level='WARNING'):
+            with self.assertRaises(LoginError) as error:
+                await self.auth.phone_number('+79991234567')
+        self.assertTrue(error.exception.restart)
+        self.assertIsNone(self.client.session.auth_key)
+        self.assertFalse(self.auth.ready)
+        self.assertFalse(self.client.connected)
+        self.client.send_error = None
+        self.assertEqual(await self.auth.begin(), 'phone')
+        self.assertEqual(await self.auth.phone_number('+79991234567'), 'code')
+        self.assertEqual(await self.auth.code('1 2 3 4 5'), 'ready')
+
     async def test_internal_error_is_not_misreported_as_telegram_rejection(self):
         await self.auth.begin()
         self.client.send_error = TypeError('private code 98765 and password')
