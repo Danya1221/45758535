@@ -30,6 +30,7 @@ from .pricing import CATEGORIES, MarkupPolicy, MarkupRule, category_for, format_
 from .sessions import load_string_session, persist_session
 from .account_login import AccountLogin, LoginError
 from .login_qr import qr_png
+from .price_schedule import PriceSchedule
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ class Inputs(StatesGroup):
     login_code = State()
     login_password = State()
     login_qr = State()
+    price_timer = State()
 
 
 class OwnerOnly(BaseMiddleware):
@@ -122,7 +124,8 @@ def keyboard(rows: list[list[tuple[str, str]]]):
 def menu():
     return keyboard([
         [('🔐 По номеру', 'login'), ('📷 Войти по QR', 'loginqr')],
-        [('💰 Загрузить прайс', 'price'), ('💬 Группы', 'chats:0')],
+        [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats:0')],
+        [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup')],
         [('▶️ Включить ответы', 'run'), ('⏸ Пауза', 'pause')],
@@ -152,10 +155,11 @@ class Application:
         self.refresh_requested = asyncio.Event()
         self.auth = AccountLogin(client, config.data_dir, self.account_ready)
         self.qr_task: asyncio.Task | None = None
+        self.price_schedule = PriceSchedule(store, config.price_interval)
         self.engine = Engine(store, self.send_reply, max_per_minute=config.max_per_minute,
                              dedup_seconds=config.dedup_seconds, contact=config.contact)
         self.price_sync = PriceSync(store, client, config.price_bot, self.notify, request_text=config.price_request,
-                                    button_text=config.price_button, interval=config.price_interval) if config.price_bot else None
+                                    button_text=config.price_button, interval=self.price_schedule.interval) if config.price_bot else None
         if self.price_sync:
             store.set('price_ready', False)
         self.register_handlers()
@@ -169,6 +173,7 @@ class Application:
             self.store.set('price_ready', False)
         self.account_available.set()
         self.account_changed.set()
+        self.price_schedule.mark_due()
         self.refresh_requested.set()
 
     def account_unavailable(self, *, authorization_lost=False):
@@ -192,6 +197,7 @@ class Application:
                         if self.price_sync:
                             self.store.set('price_ready', False)
                         self.account_available.set()
+                        self.price_schedule.mark_due()
                         self.refresh_requested.set()
                     try:
                         await asyncio.wait_for(asyncio.shield(self.client.disconnected), 30)
@@ -219,12 +225,105 @@ class Application:
         while True:
             await self.account_available.wait()
             self.refresh_requested.clear()
-            await self.price_sync.refresh()
-            delay = max(self.config.price_interval, self.price_sync.retry_after - time.monotonic())
+            delay = self.price_schedule.remaining()
+            if delay is not None:
+                delay = max(delay, self.price_sync.retry_after - time.monotonic())
+                if delay <= 0:
+                    if await self.refresh_source_price() is not None:
+                        continue
+                    delay = None  # A manual request will wake us on completion.
             try:
                 await asyncio.wait_for(self.refresh_requested.wait(), delay)
             except asyncio.TimeoutError:
                 pass
+
+    def price_source_busy(self):
+        lock = getattr(self.price_sync, 'lock', None)
+        return lock is not None and lock.locked()
+
+    async def refresh_source_price(self):
+        if self.price_source_busy():
+            return None
+        try:
+            return await self.price_sync.refresh()
+        finally:
+            self.price_schedule.completed()
+            self.refresh_requested.set()
+
+    async def request_price(self, message: Message, state: FSMContext):
+        if not self.price_sync:
+            await message.answer('Источник прайса не настроен. Добавь PRICE_BOT_USERNAME и команду PRICE_REQUEST_TEXT в Railway.\n'
+                                 'Загрузить прайс вручную: /uploadprice.', reply_markup=menu())
+            return
+        if not await self.require_account(message):
+            return
+        await state.clear()
+        if self.price_source_busy():
+            await message.answer('Прайс уже запрашивается. Дождись результата.', reply_markup=menu())
+            return
+        await message.answer(f'Запрашиваю прайс у {self.config.price_bot}…')
+        if await self.refresh_source_price():
+            await message.answer('Прайс обновлён. Изменения цен: /changes.', reply_markup=menu())
+
+    def price_timer_status(self):
+        if not self.price_sync:
+            return 'Автообновление: источник не настроен.'
+        if not self.price_schedule.enabled:
+            return 'Автообновление: выключено. Запросить сейчас: /price.'
+        interval = self.price_schedule.interval
+        period = f'{interval // 60} мин' if interval % 60 == 0 else f'{interval} сек'
+        text = f'Автообновление: каждые {period}.'
+        if not self.account_available.is_set():
+            return text + '\nСледующий запрос: после подключения аккаунта.'
+        if self.price_source_busy():
+            return text + '\nСейчас загружаю прайс.'
+        remaining = max(self.price_schedule.remaining() or 0, self.price_sync.retry_after - time.monotonic())
+        seconds = max(0, int(remaining + .999))
+        stamp = datetime.fromtimestamp(self.price_schedule.clock() + remaining, ZoneInfo('Europe/Moscow')).strftime('%H:%M:%S МСК')
+        return text + f'\nСледующий запрос: {stamp}, через {seconds // 60:02d}:{seconds % 60:02d}.'
+
+    async def show_price_timer(self, message: Message):
+        stamp = self.store.get('price_updated_at')
+        last = datetime.fromtimestamp(stamp, ZoneInfo('Europe/Moscow')).strftime('%d.%m %H:%M:%S МСК') if stamp else 'ещё не было'
+        await message.answer('⏱ Обновление прайса\n'
+                             f'Источник: {self.config.price_bot or "не настроен"}\n'
+                             f'{self.price_timer_status()}\nПоследний сохранённый прайс: {last}\n\n'
+                             'Выбери интервал или задай свой. После завершения запроса отсчёт начинается заново.',
+                             reply_markup=keyboard([
+                                 [('5 мин', 'timer:5'), ('10 мин', 'timer:10'), ('30 мин', 'timer:30'), ('1 час', 'timer:60')],
+                                 [('Свой интервал', 'timer:custom'),
+                                  ('⏸ Выключить' if self.price_schedule.enabled else '▶️ Включить',
+                                   'timer:off' if self.price_schedule.enabled else 'timer:on')],
+                                 [('💰 Запросить сейчас', 'price'), ('🔄 Таймер', 'price_timer')],
+                                 [('Меню', 'home')]]))
+
+    async def set_price_timer(self, message: Message, state: FSMContext, value: str):
+        value = value.strip().lower()
+        if value in {'off', 'выкл', '0'}:
+            seconds = None
+        elif value == 'on':
+            seconds = self.price_schedule.interval
+        elif value.isascii() and value.isdecimal() and 1 <= len(value) <= 4 and 1 <= int(value) <= 1440:
+            seconds = int(value) * 60
+        else:
+            await message.answer('Введи интервал от 1 до 1440 минут. Например: /timer 10. Выключить: /timer off.')
+            return
+        self.price_schedule.configure(seconds)
+        if seconds is not None and not self.store.get('price_ready', True):
+            self.price_schedule.mark_due()
+        if self.price_sync:
+            self.price_sync.interval = self.price_schedule.interval
+        self.refresh_requested.set()
+        await state.clear()
+        await self.show_price_timer(message)
+
+    async def upload_price(self, message: Message, state: FSMContext):
+        await state.set_state(Inputs.price)
+        await state.update_data(price_parts=[])
+        await message.answer('Пришли прайс с блоками «Название» и «От 1 шт — цена» текстом, частями или файлом .txt.\n'
+                             'Дождись строки «Всего найдено N товаров». Без итоговой строки можно завершить кнопкой: '
+                             'обновятся только присланные позиции. Отмена: /cancel.',
+                             reply_markup=keyboard([[('Завершить загрузку части прайса', 'price_done')]]))
 
     async def require_account(self, message: Message) -> bool:
         if not self.auth.ready:
@@ -397,6 +496,7 @@ class Application:
                 f'Позиций: {len(products)}, подходят для предложения: {sum(p.eligible for p in products)}\n'
                 f"Прайс: {'готов к использованию' if self.store.get('price_ready', True) else 'требует успешного обновления'}\n"
                 f"Источник: {self.config.price_bot or 'ручная загрузка'}\n"
+                f'{self.price_timer_status()}\n'
                 f'Выбрано групп: {len(self.store.chats())}\n'
                 f"Названия без «куплю»: {'учитываются' if self.store.get('allow_bare', True) else 'пропускаются'}\n"
                 'Куда отвечаем: на исходное сообщение в группе, от подключённого аккаунта.\n'
@@ -408,7 +508,7 @@ class Application:
         if not await self.require_account(message):
             return
         if not any(p.eligible for p in self.store.products()):
-            await message.answer('Сначала загрузи прайс /price или список /catalog.')
+            await message.answer('Сначала запроси прайс /price, загрузи вручную /uploadprice или добавь список /catalog.')
         elif not self.store.get('price_ready', True):
             await message.answer('Дождись успешного обновления прайса: /refresh. Статус: /status')
         elif not self.store.chats():
@@ -528,7 +628,8 @@ class Application:
             await message.answer('Бот отвечает по актуальному прайсу в выбранных группах.\n\n'
                                  'Подключить аккаунт: /login — номер, код, затем пароль 2FA при необходимости.\n\n'
                                  '/loginqr — вход по QR через Telegram на телефоне, без запроса кода.\n\n'
-                                 '1. /price — загрузить прайс от поставщика; /catalog — свой список.\n'
+                                 '1. /price — запросить прайс у поставщика; /uploadprice — загрузить вручную.\n'
+                                 '/timer — автообновление; /catalog — свой список.\n'
                                  '2. /markup — настроить наценку.\n3. /chats — выбрать группы.\n'
                                  '4. /test — проверить запрос.\n5. /run — включить ответы.\n\n'
                                  '/pause — остановить; /status — статус; /stock — текущий список; '
@@ -542,14 +643,22 @@ class Application:
         async def login_account_qr(message: Message, state: FSMContext):
             await self.begin_login_qr(message, state)
 
-        @dp.message(Command('price'))
+        @dp.message(Command('price', 'refresh'))
         async def price(message: Message, state: FSMContext):
-            await state.set_state(Inputs.price)
-            await state.update_data(price_parts=[])
-            await message.answer('Пришли прайс с блоками «Название» и «От 1 шт — цена» текстом, несколькими сообщениями или файлом .txt.\n'
-                                 'Если он разбит на части, дождись последней строки «Всего найдено N товаров». '
-                                 'Без итоговой строки можно завершить кнопкой: тогда обновятся только присланные позиции.',
-                                 reply_markup=keyboard([[('Завершить загрузку части прайса', 'price_done')]]))
+            await self.request_price(message, state)
+
+        @dp.message(Command('uploadprice'))
+        async def upload_price(message: Message, state: FSMContext):
+            await self.upload_price(message, state)
+
+        @dp.message(Command('timer'))
+        async def timer(message: Message, state: FSMContext):
+            value = (message.text or '').partition(' ')[2].strip()
+            if value:
+                await self.set_price_timer(message, state, value)
+            else:
+                await state.clear()
+                await self.show_price_timer(message)
 
         @dp.message(Command('changes'))
         async def changes(message: Message):
@@ -570,20 +679,6 @@ class Application:
             for product in [p for p in self.store.products() if p.warnings][:8]:
                 lines.append(f'Спорная строка: {product.name} | у товара {product.country or "—"} | у цены {product.price_country or "—"}')
             await message.answer('\n'.join(lines)[:4000], parse_mode=None)
-
-        @dp.message(Command('refresh'))
-        async def refresh(message: Message):
-            if not self.price_sync:
-                await message.answer('Автоисточник ещё не настроен. Нужны @username бота прайса и команда либо кнопка получения прайса.')
-                return
-            if not await self.require_account(message):
-                return
-            if self.price_sync.lock.locked():
-                await message.answer('Обновление уже идёт.')
-                return
-            await message.answer('Запрашиваю новый прайс…')
-            if await self.price_sync.refresh():
-                await message.answer('Обновление завершено. Подробности: /changes.')
 
         @dp.message(Command('cancel'))
         async def cancel(message: Message, state: FSMContext):
@@ -683,7 +778,7 @@ class Application:
                     lines.extend((f'• {p.name}{p.country}', f'{p.price_country} От {p.min_qty} шт - {p.price}', ''))
                 lines.append(f'Всего найдено {len(products)} товаров')
                 await message.answer_document(BufferedInputFile('\n'.join(lines).encode('utf-8-sig'), filename='my_price.txt'),
-                                              caption='Исходные цены без наценки. Повторная загрузка — через /price. Остатки не указаны источником.')
+                                              caption='Исходные цены без наценки. Повторная загрузка — через /uploadprice. Остатки не указаны источником.')
                 return
             buffer = io.StringIO()
             writer = csv.writer(buffer, delimiter='|', lineterminator='\n')
@@ -716,13 +811,20 @@ class Application:
                 await state.set_state(Inputs.catalog)
                 await message.answer(CATALOG_PROMPT)
             elif action == 'price':
-                await state.set_state(Inputs.price)
-                await state.update_data(price_parts=[])
-                await message.answer('Пришли все части прайса до строки «Всего найдено N товаров» или файлом .txt. Отмена: /cancel.',
-                                     reply_markup=keyboard([[('Завершить загрузку части прайса', 'price_done')]]))
+                await self.request_price(message, state)
+            elif action == 'uploadprice':
+                await self.upload_price(message, state)
+            elif action == 'price_timer':
+                await state.clear()
+                await self.show_price_timer(message)
+            elif action == 'timer:custom':
+                await state.set_state(Inputs.price_timer)
+                await message.answer('На сколько минут поставить автообновление? Введи число от 1 до 1440.\nВыключить: off. Отмена: /cancel.')
+            elif action.startswith('timer:'):
+                await self.set_price_timer(message, state, action.split(':', 1)[1])
             elif action == 'price_done':
                 if await state.get_state() != Inputs.price.state:
-                    await message.answer('Сначала начни загрузку: /price')
+                    await message.answer('Сначала начни загрузку: /uploadprice')
                     return
                 parts = (await state.get_data()).get('price_parts', [])
                 await self.import_price(message, state, '\n'.join(parts))
@@ -759,6 +861,10 @@ class Application:
                 except TelegramAPIError:
                     pass
                 await self.show_chats(message, int(page))
+
+        @dp.message(Inputs.price_timer, F.text, ~F.text.startswith('/'))
+        async def price_timer_input(message: Message, state: FSMContext):
+            await self.set_price_timer(message, state, message.text)
 
         @dp.message(Inputs.login_phone, F.text, ~F.text.startswith('/'))
         async def login_phone(message: Message, state: FSMContext):
@@ -804,7 +910,7 @@ class Application:
             joined = '\n'.join(parts)
             if len(joined.encode('utf-8')) > 1_000_000:
                 await state.clear()
-                await message.answer('Прайс больше 1 МБ. Начни заново: /price')
+                await message.answer('Прайс больше 1 МБ. Начни заново: /uploadprice')
                 return
             await state.update_data(price_parts=parts)
             if FOOTER.search(joined):
@@ -872,7 +978,8 @@ async def run(config: Config):
             client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
             ('start', 'Меню'), ('login', 'Войти по номеру'), ('loginqr', 'Войти по QR'),
-            ('price', 'Загрузить прайс'), ('changes', 'Изменения цен'),
+            ('price', 'Запросить прайс у поставщика'), ('uploadprice', 'Загрузить прайс вручную'),
+            ('timer', 'Автообновление прайса'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
             ('markup', 'Наценка по категориям'),
             ('test', 'Проверить запрос'), ('run', 'Включить ответы'), ('pause', 'Пауза'),

@@ -108,13 +108,13 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.chats(), {-100123: 'Закупки'})
 
     async def test_supplier_price_chunks_and_price_changes(self):
-        await self.feed('/price')
+        await self.feed('/uploadprice')
         await self.feed('**• iPhone 17 256GB Black🇨🇳**\n🇨🇳 От 1 шт - 85 000')
         self.assertEqual(self.store.products(), [])
         await self.feed('Всего найдено 1 товаров')
         self.assertEqual(str(self.store.products()[0].price), '85000')
         self.assertIsNone(self.store.products()[0].stock)
-        await self.feed('/price')
+        await self.feed('/uploadprice')
         await self.feed('**• iPhone 17 256GB Black🇨🇳**\n🇨🇳 От 1 шт - 86 000\nВсего найдено 1 товаров')
         await self.feed('/changes')
         self.assertIn('85000 → 86000', self.texts()[-1])
@@ -125,7 +125,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
     async def test_incomplete_price_leaves_previous_version(self):
         await self.feed('/catalog')
         await self.feed('iPhone 17|85000|2')
-        await self.feed('/price')
+        await self.feed('/uploadprice')
         await self.feed('• iPhone 18\nОт 1 шт - 90 000\nВсего найдено 425 товаров')
         self.assertEqual(self.store.products()[0].name, 'iPhone 17')
         self.assertIn('Прайс не изменён', self.texts()[-1])
