@@ -3,10 +3,19 @@ import asyncio
 import logging
 import math
 import time
+import unicodedata
 
 from telethon.errors import FloodWaitError, FloodPremiumWaitError
 
 log = logging.getLogger(__name__)
+
+
+def search_groups(items, query):
+    def folded(text):
+        return unicodedata.normalize('NFKC', text).casefold().replace('ё', 'е')
+    terms = folded(query).split()
+    return [(cid, title) for cid, title in items.items()
+            if all(term in folded(title) for term in terms)]
 
 
 class GroupDirectory:

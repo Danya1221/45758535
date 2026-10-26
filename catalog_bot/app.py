@@ -32,7 +32,7 @@ from .sessions import load_string_session, persist_session
 from .account_login import AccountLogin, LoginError
 from .login_qr import qr_png
 from .price_schedule import PriceSchedule
-from .group_directory import GroupDirectory
+from .group_directory import GroupDirectory, search_groups
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +101,7 @@ class Inputs(StatesGroup):
     login_password = State()
     login_qr = State()
     price_timer = State()
+    group_search = State()
 
 
 class OwnerOnly(BaseMiddleware):
@@ -126,7 +127,7 @@ def keyboard(rows: list[list[tuple[str, str]]]):
 def menu():
     return keyboard([
         [('🔐 По номеру', 'login'), ('📷 Войти по QR', 'loginqr')],
-        [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats:0')],
+        [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats_all')],
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup')],
@@ -158,6 +159,7 @@ class Application:
         self.chat_ui_lock = asyncio.Lock()
         self.chat_origin = self.chat_panel = None
         self.chat_page = 0
+        self.chat_query = ''
         self.chat_signature = None
         self.group_directory = GroupDirectory(store, client, self.account_available, self.update_chats_panel)
         self.price_schedule = PriceSchedule(store, config.price_interval)
@@ -170,6 +172,8 @@ class Application:
         self.register_handlers()
 
     async def account_ready(self, user):
+        if self.group_directory.account_id != int(user.id):
+            self.chat_query, self.chat_page = '', 0
         self.group_directory.bind(int(user.id))
         self.store.set('telegram_account_id', int(user.id))
         self.store.set('telegram_account_name', getattr(user, 'username', None) or getattr(user, 'first_name', None) or str(user.id))
@@ -525,10 +529,12 @@ class Application:
             self.store.set('active', True)
             await message.answer('▶️ Ответы включены. Обрабатываю новые запросы в выбранных группах. Остановить: /pause')
 
-    async def show_chats(self, message: Message, page: int = 0, refresh: bool = False):
+    async def show_chats(self, message: Message, page: int = 0, refresh: bool = False, query: str | None = None):
         if not await self.require_account(message):
             return
         async with self.chat_ui_lock:
+            if query is not None:
+                self.chat_query = query
             same_origin = self.chat_origin and self.chat_origin.message_id == message.message_id
             same_panel = self.chat_panel and self.chat_panel.message_id == message.message_id
             if not same_origin and not same_panel:
@@ -549,9 +555,19 @@ class Application:
             if self.chat_origin is not None:
                 await self.render_chats_panel()
 
+    async def set_group_search(self, message: Message, state: FSMContext, value: str):
+        if not await self.require_account(message):
+            return
+        query = ' '.join(value.split())
+        if not query or len(query) > 200:
+            await message.answer('Введи название или часть названия группы, от 1 до 200 символов. Отмена: /cancel.')
+            return
+        await state.clear()
+        await self.show_chats(message, query=query)
+
     async def render_chats_panel(self):
         directory = self.group_directory
-        dialogs = list(directory.items.items())
+        dialogs = search_groups(directory.items, self.chat_query)
         page = min(max(0, self.chat_page), max(0, (len(dialogs) - 1) // 8))
         self.chat_page = page
         selected = self.store.chats()
@@ -564,11 +580,17 @@ class Application:
             nav.append(('→', f'chats:{page+1}'))
         if nav:
             rows.append(nav)
+        rows.append([('🔎 Найти группу', 'chats_search'), ('Все группы', 'chats_all')])
         rows.append([('🔄 Обновить', 'refresh'), ('Меню', 'home')])
-        text = (f'💬 Группы: {len(dialogs)}. Выбрано: {len(selected)}. Страница {page+1}.\n'
+        heading = (f'🔎 Поиск групп: {self.chat_query}\nНайдено: {len(dialogs)} из {len(directory.items)}.'
+                   if self.chat_query else f'💬 Группы: {len(dialogs)}.')
+        text = (f'{heading} Выбрано: {len(selected)}. Страница {page+1}.\n'
                 f"Аккаунт: {self.store.get('telegram_account_name', 'подключён')}\n"
                 'Нажми на группу, чтобы включить или выключить её.\n'
                 'Сообщения без «куплю»: /bare on или /bare off.')
+        if self.chat_query and not dialogs:
+            text += ('\n\nПока совпадений нет. Результат обновится по мере загрузки групп.'
+                     if directory.loading else '\n\nСреди загруженных групп совпадений нет. Попробуй другую часть названия.')
         wait = max(0, math.ceil(directory.retry_at - directory.clock()))
         if directory.loading:
             text += ('\n\nПродолжу загрузку автоматически через ' + str(wait) + ' сек.'
@@ -577,7 +599,7 @@ class Application:
                 text += '\nУже найденные группы можно выбирать сейчас.'
         elif directory.error:
             text += '\n\n' + directory.error
-        elif directory.complete and not dialogs:
+        elif directory.complete and not dialogs and not self.chat_query:
             text += '\nПодключённый аккаунт пока не состоит в группах.'
         markup = keyboard(rows)
         signature = (text, markup.model_dump_json())
@@ -738,9 +760,16 @@ class Application:
             await message.answer(self.status(), reply_markup=menu())
 
         @dp.message(Command('chats'))
-        async def chats(message: Message):
-            value = (message.text or '').partition(' ')[2].strip().lower()
-            await self.show_chats(message, refresh=value in {'refresh', 'обновить'})
+        async def chats(message: Message, state: FSMContext):
+            value = (message.text or '').partition(' ')[2].strip()
+            if value.lower() in {'refresh', 'обновить'}:
+                await state.clear()
+                await self.show_chats(message, refresh=True)
+            elif value:
+                await self.set_group_search(message, state, value)
+            else:
+                await state.clear()
+                await self.show_chats(message, query='')
 
         @dp.message(Command('run'))
         async def run(message: Message):
@@ -888,6 +917,14 @@ class Application:
             elif action == 'pause':
                 self.store.set('active', False)
                 await message.answer('⏸ Ответы выключены. Уже отправляемое сообщение может завершиться.', reply_markup=menu())
+            elif action == 'chats_search':
+                if await self.require_account(message):
+                    await state.set_state(Inputs.group_search)
+                    await message.answer('Введи название или часть названия группы из своего аккаунта.\n'
+                                         'Например: закупки. Можно также: /chats закупки. Отмена: /cancel.')
+            elif action == 'chats_all':
+                await state.clear()
+                await self.show_chats(message, query='')
             elif action == 'refresh':
                 await self.show_chats(message, refresh=True)
             elif action.startswith('chats:'):
@@ -904,6 +941,10 @@ class Application:
                 except TelegramAPIError:
                     pass
                 await self.show_chats(message, int(page))
+
+        @dp.message(Inputs.group_search, F.text, ~F.text.startswith('/'))
+        async def group_search_input(message: Message, state: FSMContext):
+            await self.set_group_search(message, state, message.text)
 
         @dp.message(Inputs.price_timer, F.text, ~F.text.startswith('/'))
         async def price_timer_input(message: Message, state: FSMContext):

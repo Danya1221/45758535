@@ -17,8 +17,8 @@ from catalog_bot.storage import Store
 from tests import test_app as helpers
 
 
-def group(number, *, is_group=True):
-    return SimpleNamespace(id=-1000-number, title=f'Группа {number}', is_group=is_group)
+def group(number, *, is_group=True, title=None):
+    return SimpleNamespace(id=-1000-number, title=title or f'Группа {number}', is_group=is_group)
 
 
 class ControlledSleep:
@@ -282,5 +282,83 @@ class GroupPickerTests(unittest.IsolatedAsyncioTestCase):
         await self.feed('/chats', user_id=66)
         await self.feed('/chats', chat_type='group')
         await self.callback('chats:0', user_id=66)
+        await self.callback('chats_search', user_id=66)
+        await self.feed('/chats название', user_id=66)
         self.assertEqual(self.client.factories, [])
         self.assertEqual(self.store.chats(), {})
+
+    def visible_buttons(self):
+        markup = next(call.reply_markup for call in reversed(self.transport.calls)
+                      if getattr(call, 'reply_markup', None) is not None)
+        return [button for row in markup.inline_keyboard for button in row]
+
+    async def test_search_button_accepts_partial_name_ignoring_case_and_yo(self):
+        self.client.pages = [[group(1, title='Зелёный | ОПТ'), group(2, title='Apple'),
+                              group(3, title='Зеленый закупки')]]
+        await self.callback('chats_search', root=True)
+        self.assertIn('часть названия', self.texts()[-1])
+        self.assertEqual(self.client.factories, [])
+        await self.feed('  ЗЕЛЕНЫЙ   опт  ')
+        await self.finish()
+        self.assertIn('Найдено: 1 из 3', self.texts()[-1])
+        choices = [b.callback_data for b in self.visible_buttons() if b.callback_data.startswith('toggle:')]
+        self.assertEqual(choices, ['toggle:0:-1001'])
+
+    async def test_filtered_paging_and_selection_keep_query_and_exact_group_id(self):
+        self.client.pages = [[group(i, title=f'Опт APPLE Москва {i}') for i in range(10)] +
+                             [group(i, title=f'Samsung {i}') for i in range(10, 14)]]
+        await self.feed('/chats apple опт')
+        await self.finish()
+        self.assertIn('Найдено: 10 из 14', self.texts()[-1])
+        await self.callback('chats:1')
+        self.assertIn('Страница 2', self.texts()[-1])
+        choices = [b.callback_data for b in self.visible_buttons() if b.callback_data.startswith('toggle:')]
+        self.assertEqual(choices, ['toggle:1:-1008', 'toggle:1:-1009'])
+        await self.callback('toggle:1:-1009')
+        self.assertEqual(self.store.chats(), {-1009: 'Опт APPLE Москва 9'})
+        self.assertEqual(self.app.chat_query, 'apple опт')
+        self.assertEqual(len(self.client.factories), 1)
+
+    async def test_all_groups_and_plain_command_clear_filter_preserving_selection(self):
+        self.client.pages = [[group(1, title='Apple'), group(2, title='Samsung')]]
+        await self.feed('/chats apple')
+        await self.finish()
+        await self.callback('toggle:0:-1001')
+        await self.callback('chats_all')
+        self.assertEqual(self.app.chat_query, '')
+        self.assertIn('Группы: 2', self.texts()[-1])
+        await self.feed('/chats samsung')
+        self.assertEqual(self.app.chat_query, 'samsung')
+        await self.feed('/chats')
+        self.assertEqual(self.app.chat_query, '')
+        self.assertEqual(self.store.chats(), {-1001: 'Apple'})
+        self.assertEqual(len(self.client.factories), 1)
+
+    async def test_search_updates_when_matching_group_arrives_after_flood(self):
+        self.client.pages = [[group(1, title='Обсуждения')], [group(2, title='Техника опт')]]
+        self.client.failure = errors.FloodWaitError(None, capture=26)
+        await self.feed('/chats опт')
+        await asyncio.wait_for(self.wait.entered.wait(), 3)
+        self.assertIn('Пока совпадений нет', self.texts()[-1])
+        self.assertNotIn('пока не состоит', self.texts()[-1])
+        self.wait.release.set()
+        await self.finish()
+        self.assertIn('Найдено: 1 из 2', self.texts()[-1])
+        self.assertEqual(self.app.chat_query, 'опт')
+        self.assertIn('toggle:0:-1002', [b.callback_data for b in self.visible_buttons()])
+
+    async def test_empty_search_results_offer_reset_instead_of_no_groups_claim(self):
+        await self.feed('/chats отсутствует')
+        await self.finish()
+        self.assertIn('совпадений нет', self.texts()[-1])
+        self.assertNotIn('пока не состоит', self.texts()[-1])
+        self.assertIn('chats_all', [b.callback_data for b in self.visible_buttons()])
+
+    async def test_invalid_search_keeps_input_mode_and_does_not_query_telegram(self):
+        await self.callback('chats_search', root=True)
+        await self.feed('я' * 201)
+        self.assertIn('200 символов', self.texts()[-1])
+        self.assertEqual(self.client.factories, [])
+        await self.feed('Группа 2')
+        await self.finish()
+        self.assertIn('Найдено: 1 из 2', self.texts()[-1])
