@@ -5,6 +5,7 @@ import csv
 import io
 import logging
 import os
+import time
 from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,8 @@ from .storage import Store
 from .prices import FOOTER, PriceFeedError, parse_price_feed
 from .price_sync import PriceSync, format_summary
 from .pricing import CATEGORIES, MarkupPolicy, MarkupRule, category_for, format_policy, price_products, resolve_category
-from .sessions import load_string_session
+from .sessions import load_string_session, persist_session
+from .account_login import AccountLogin, LoginError
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +92,9 @@ class Inputs(StatesGroup):
     test = State()
     intro = State()
     price = State()
+    login_phone = State()
+    login_code = State()
+    login_password = State()
 
 
 class OwnerOnly(BaseMiddleware):
@@ -114,6 +119,7 @@ def keyboard(rows: list[list[tuple[str, str]]]):
 
 def menu():
     return keyboard([
+        [('🔐 Войти в аккаунт', 'login')],
         [('💰 Загрузить прайс', 'price'), ('💬 Группы', 'chats:0')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup')],
@@ -139,6 +145,10 @@ class Application:
         self.dp.callback_query.outer_middleware(OwnerOnly(config.owner_id))
         self.dialogs: list[tuple[int, str]] = []
         self.dialogs_loaded = False
+        self.account_available = asyncio.Event()
+        self.account_changed = asyncio.Event()
+        self.refresh_requested = asyncio.Event()
+        self.auth = AccountLogin(client, config.data_dir, self.account_ready)
         self.engine = Engine(store, self.send_reply, max_per_minute=config.max_per_minute,
                              dedup_seconds=config.dedup_seconds, contact=config.contact)
         self.price_sync = PriceSync(store, client, config.price_bot, self.notify, request_text=config.price_request,
@@ -146,6 +156,122 @@ class Application:
         if self.price_sync:
             store.set('price_ready', False)
         self.register_handlers()
+
+    async def account_ready(self, user):
+        self.store.set('telegram_account_id', int(user.id))
+        self.store.set('telegram_account_name', getattr(user, 'username', None) or getattr(user, 'first_name', None) or str(user.id))
+        self.dialogs_loaded = False
+        if self.price_sync:
+            self.price_sync.peer = None
+            self.store.set('price_ready', False)
+        self.account_available.set()
+        self.account_changed.set()
+        self.refresh_requested.set()
+
+    def account_unavailable(self, *, authorization_lost=False):
+        self.account_available.clear()
+        self.refresh_requested.set()
+        if self.price_sync:
+            self.store.set('price_ready', False)
+        if authorization_lost:
+            self.auth.ready, self.auth.user = False, None
+            self.store.set('active', False)
+
+    async def account_loop(self):
+        while True:
+            self.account_changed.clear()
+            was_ready = self.auth.ready
+            retry_delay = 30
+            try:
+                ready = await self.auth.restore()
+                if ready:
+                    if not self.account_available.is_set():
+                        if self.price_sync:
+                            self.store.set('price_ready', False)
+                        self.account_available.set()
+                        self.refresh_requested.set()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(self.client.disconnected), 30)
+                    except asyncio.TimeoutError:
+                        continue
+                    self.account_unavailable()
+                else:
+                    self.account_unavailable(authorization_lost=True)
+                    if was_ready:
+                        await self.notify('Авторизация Telegram потеряна. Ответы на паузе. Для входа: /login')
+            except (RPCError, OSError, asyncio.TimeoutError, ValueError, LoginError) as exc:
+                # Never include raw authentication errors or credential values.
+                log.warning('Account connection: %s', type(exc).__name__)
+                lost = isinstance(exc, RPCError) and getattr(exc, 'code', None) == 401
+                self.account_unavailable(authorization_lost=lost)
+                if isinstance(exc, FloodWaitError):
+                    self.auth.retry_until = time.monotonic() + exc.seconds
+                    retry_delay = max(retry_delay, exc.seconds)
+            try:
+                await asyncio.wait_for(self.account_changed.wait(), retry_delay)
+            except asyncio.TimeoutError:
+                pass
+
+    async def price_loop(self):
+        while True:
+            await self.account_available.wait()
+            self.refresh_requested.clear()
+            await self.price_sync.refresh()
+            delay = max(self.config.price_interval, self.price_sync.retry_after - time.monotonic())
+            try:
+                await asyncio.wait_for(self.refresh_requested.wait(), delay)
+            except asyncio.TimeoutError:
+                pass
+
+    async def require_account(self, message: Message) -> bool:
+        if not self.auth.ready:
+            await message.answer('Сначала подключи аккаунт Telegram: /login')
+            return False
+        if not self.account_available.is_set() or not self.client.is_connected():
+            await message.answer('Соединение с аккаунтом восстанавливается. Проверь /status немного позже.')
+            return False
+        return True
+
+    async def begin_login(self, message: Message, state: FSMContext):
+        await state.clear()
+        try:
+            phase = await self.auth.begin()
+        except LoginError as exc:
+            await message.answer(str(exc))
+            return
+        if phase == 'ready':
+            await message.answer(f'✅ Аккаунт уже подключён. Telegram ID: {self.auth.user.id}.\nДальше: /markup и /chats.', reply_markup=menu())
+            return
+        self.store.set('active', False)
+        self.account_available.clear()
+        await state.set_state(Inputs.login_phone)
+        await message.answer('Пришли номер аккаунта с кодом страны, например +79991234567.\nОтмена: /cancel.')
+
+    async def login_input(self, message: Message, state: FSMContext, phase: str):
+        value = message.text or ''
+        if phase in {'code', 'password'}:
+            try:
+                await message.delete()
+            except TelegramAPIError:
+                pass
+        try:
+            result = await getattr(self.auth, {'phone': 'phone_number', 'code': 'code', 'password': 'password'}[phase])(value)
+        except LoginError as exc:
+            if exc.restart:
+                await state.clear()
+            await message.answer(str(exc))
+            return
+        if result == 'code':
+            await state.set_state(Inputs.login_code)
+            await message.answer('Telegram отправил код входа. Введи его цифры через пробелы, например 1 2 3 4 5.\n'
+                                 'Не пересылай сообщение с кодом. Отмена: /cancel.')
+        elif result == 'password':
+            await state.set_state(Inputs.login_password)
+            await message.answer('Включена двухэтапная проверка. Пришли пароль 2FA. Отмена: /cancel.')
+        else:
+            await state.clear()
+            await message.answer(f'✅ Аккаунт подключён. Telegram ID: {self.auth.user.id}. Авторизация сохранена.\n'
+                                 'Ответы пока выключены. Настрой /markup, выбери /chats и проверь /test. Включить: /run.', reply_markup=menu())
 
     async def send_reply(self, chat_id: int, message_id: int, text: str):
         try:
@@ -165,7 +291,8 @@ class Application:
             log.warning('Owner notification failed: %s', type(exc).__name__)
 
     async def monitor(self, event):
-        if event.out or not event.is_group or event.chat_id not in self.store.chats() or not self.store.get('active', False):
+        if (not self.auth.ready or not self.account_available.is_set() or event.out or not event.is_group
+                or event.chat_id not in self.store.chats() or not self.store.get('active', False)):
             return
         try:
             sender = await event.get_sender()
@@ -188,6 +315,8 @@ class Application:
     def status(self) -> str:
         products = self.store.products()
         return ('📊 Статус\n'
+                f"Аккаунт: {self.store.get('telegram_account_name', 'подключён') if self.auth.ready else 'не подключён — /login'}\n"
+                f"Соединение: {'есть' if self.account_available.is_set() and self.client.is_connected() else 'нет'}\n"
                 f"Ответы: {'включены' if self.store.get('active', False) else 'пауза'}\n"
                 f'Позиций: {len(products)}, подходят для предложения: {sum(p.eligible for p in products)}\n'
                 f"Прайс: {'готов к использованию' if self.store.get('price_ready', True) else 'требует успешного обновления'}\n"
@@ -200,6 +329,8 @@ class Application:
                 format_policy(self.store.markup_policy()))
 
     async def activate(self, message: Message):
+        if not await self.require_account(message):
+            return
         if not any(p.eligible for p in self.store.products()):
             await message.answer('Сначала загрузи прайс /price или список /catalog.')
         elif not self.store.get('price_ready', True):
@@ -213,6 +344,8 @@ class Application:
             await message.answer('▶️ Ответы включены. Обрабатываю новые запросы в выбранных группах. Остановить: /pause')
 
     async def show_chats(self, message: Message, page: int = 0, refresh: bool = False):
+        if not await self.require_account(message):
+            return
         if refresh or not self.dialogs_loaded:
             try:
                 self.dialogs = [(d.id, d.title) async for d in self.client.iter_dialogs() if d.is_group]
@@ -307,15 +440,26 @@ class Application:
     def register_handlers(self):
         dp = self.dp
 
+        @dp.message(Inputs.login_password, F.text,
+                    ~F.text.regexp(r'^/(?:cancel|login|start|help)(?:@\w+)?(?:\s|$)'))
+        async def login_password(message: Message, state: FSMContext):
+            await self.login_input(message, state, 'password')
+
         @dp.message(Command('start', 'help'))
         async def start(message: Message, state: FSMContext):
+            self.auth.cancel()
             await state.clear()
             await message.answer('Бот отвечает по актуальному прайсу в выбранных группах.\n\n'
+                                 'Подключить аккаунт: /login — номер, код, затем пароль 2FA при необходимости.\n\n'
                                  '1. /price — загрузить прайс от поставщика; /catalog — свой список.\n'
                                  '2. /markup — настроить наценку.\n3. /chats — выбрать группы.\n'
                                  '4. /test — проверить запрос.\n5. /run — включить ответы.\n\n'
                                  '/pause — остановить; /status — статус; /stock — текущий список; '
                                  '/bare — запросы без «куплю»; /intro — начало ответа; /tail — последние отправки.', reply_markup=menu())
+
+        @dp.message(Command('login'))
+        async def login_account(message: Message, state: FSMContext):
+            await self.begin_login(message, state)
 
         @dp.message(Command('price'))
         async def price(message: Message, state: FSMContext):
@@ -351,6 +495,8 @@ class Application:
             if not self.price_sync:
                 await message.answer('Автоисточник ещё не настроен. Нужны @username бота прайса и команда либо кнопка получения прайса.')
                 return
+            if not await self.require_account(message):
+                return
             if self.price_sync.lock.locked():
                 await message.answer('Обновление уже идёт.')
                 return
@@ -360,6 +506,7 @@ class Application:
 
         @dp.message(Command('cancel'))
         async def cancel(message: Message, state: FSMContext):
+            self.auth.cancel()
             await state.clear()
             await message.answer('Ввод отменён.', reply_markup=menu())
 
@@ -480,7 +627,9 @@ class Application:
             action = callback.data or ''
             await callback.answer()
             message = callback.message
-            if action == 'catalog':
+            if action == 'login':
+                await self.begin_login(message, state)
+            elif action == 'catalog':
                 await state.set_state(Inputs.catalog)
                 await message.answer(CATALOG_PROMPT)
             elif action == 'price':
@@ -503,6 +652,7 @@ class Application:
             elif action == 'status':
                 await message.answer(self.status(), reply_markup=menu())
             elif action == 'home':
+                self.auth.cancel()
                 await state.clear()
                 await message.answer('Выбери действие:', reply_markup=menu())
             elif action == 'run':
@@ -526,6 +676,14 @@ class Application:
                 except TelegramAPIError:
                     pass
                 await self.show_chats(message, int(page))
+
+        @dp.message(Inputs.login_phone, F.text, ~F.text.startswith('/'))
+        async def login_phone(message: Message, state: FSMContext):
+            await self.login_input(message, state, 'phone')
+
+        @dp.message(Inputs.login_code, F.text, ~F.text.startswith('/'))
+        async def login_code(message: Message, state: FSMContext):
+            await self.login_input(message, state, 'code')
 
         @dp.message(Inputs.catalog, F.document)
         @dp.message(Inputs.price, F.document)
@@ -610,45 +768,50 @@ async def login(config: Config):
 
 
 async def run(config: Config):
-    session = load_string_session(config.telegram_session) if config.telegram_session else str(config.data_dir / 'account')
     store = Store(config.data_dir / 'catalog.sqlite3')
-    client = TelegramClient(session, config.api_id, config.api_hash,
-                            catch_up=False, flood_sleep_threshold=0, request_retries=0)
-    bot = Bot(config.bot_token)
+    client = bot = app = None
     tasks: list[asyncio.Task] = []
     try:
-        await client.connect()
-        if not await client.is_user_authorized():
-            raise ValueError('Сессия Telegram не авторизована. Выполни login локально; для Railway также session-env. См. RAILWAY.md.')
-        me = await client.get_me()
-        if me.bot:
-            raise ValueError('Для чтения чужих групп подключи свой пользовательский аккаунт через login')
+        session_path = config.data_dir / 'account.session'
+        # Keep old StringSession deployments working, then use the persistent
+        # account file on later boots. New deployments need no session variable.
+        if config.telegram_session and not (session_path.exists() and store.get('telegram_account_id')):
+            persist_session(load_string_session(config.telegram_session), config.data_dir)
+        client = TelegramClient(str(config.data_dir / 'account'), config.api_id, config.api_hash,
+                                catch_up=False, flood_sleep_threshold=0, request_retries=0)
+        if session_path.exists():
+            session_path.chmod(0o600)
+        bot = Bot(config.bot_token)
         app = Application(config, store, client, bot)
         client.add_event_handler(app.monitor, events.NewMessage(incoming=True))
         if app.price_sync:
             client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
             client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
-            ('start', 'Меню'), ('price', 'Загрузить прайс'), ('changes', 'Изменения цен'),
+            ('start', 'Меню'), ('login', 'Войти в аккаунт Telegram'),
+            ('price', 'Загрузить прайс'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
             ('markup', 'Наценка по категориям'),
             ('test', 'Проверить запрос'), ('run', 'Включить ответы'), ('pause', 'Пауза'),
             ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки')]])
         store.prune()
-        await app.notify('Бот запущен. ' + app.status())
+        await app.notify('Бот запущен. Проверяю сохранённый вход. Статус: /status. Войти при необходимости: /login.')
         tasks = [asyncio.create_task(app.dp.start_polling(bot, close_bot_session=False)),
-                 asyncio.create_task(client.run_until_disconnected())]
-        main_tasks = list(tasks)
+                 asyncio.create_task(app.account_loop())]
         if app.price_sync:
-            tasks.append(asyncio.create_task(app.price_sync.run()))
-        done, _ = await asyncio.wait(main_tasks, return_when=asyncio.FIRST_COMPLETED)
+            tasks.append(asyncio.create_task(app.price_loop()))
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
     finally:
+        if app is not None:
+            app.auth.cancel()
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        await client.disconnect()
-        await bot.session.close()
+        if client is not None:
+            await client.disconnect()
+        if bot is not None:
+            await bot.session.close()
         store.close()

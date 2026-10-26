@@ -50,6 +50,8 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.transport = LocalSession()
         self.bot = Bot('123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi', session=self.transport)
         self.app = Application(Config(123, 'test', '', 55, Path(self.temp.name)), self.store, LocalClient(), self.bot)
+        self.app.auth.ready = True
+        self.app.account_available.set()
         self.update_id = 0
 
     async def asyncTearDown(self):
