@@ -46,6 +46,35 @@ class Store:
                 run_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
                 country TEXT NOT NULL, old_price TEXT, new_price TEXT
             );
+            CREATE TABLE IF NOT EXISTS quotes (
+                quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL, sender_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+                request_text TEXT NOT NULL, products TEXT NOT NULL, created REAL NOT NULL,
+                UNIQUE(account_id, chat_id, message_id)
+            );
+            CREATE INDEX IF NOT EXISTS quotes_by_buyer ON quotes(account_id, sender_id, created);
+            CREATE TABLE IF NOT EXISTS quote_messages (
+                account_id INTEGER NOT NULL, sender_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL, quote_id INTEGER NOT NULL,
+                PRIMARY KEY(account_id, sender_id, message_id)
+            );
+            CREATE INDEX IF NOT EXISTS quote_messages_by_quote ON quote_messages(quote_id);
+            CREATE TABLE IF NOT EXISTS followups (
+                account_id INTEGER NOT NULL, sender_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL, quote_id INTEGER NOT NULL,
+                kind TEXT NOT NULL, status TEXT NOT NULL, created REAL NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(account_id, sender_id, message_id)
+            );
+            CREATE INDEX IF NOT EXISTS followups_by_created ON followups(created);
+            CREATE TABLE IF NOT EXISTS quote_holds (
+                account_id INTEGER NOT NULL, sender_id INTEGER NOT NULL,
+                quote_id INTEGER NOT NULL, product_key TEXT NOT NULL,
+                status TEXT NOT NULL, created REAL NOT NULL, detail TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(quote_id, product_key)
+            );
+            CREATE INDEX IF NOT EXISTS quote_holds_by_created ON quote_holds(created);
         """)
         columns = {r[1] for r in self.db.execute('PRAGMA table_info(products)')}
         for column, definition in [('stock_known', 'INTEGER NOT NULL DEFAULT 1'), ('country', "TEXT NOT NULL DEFAULT ''"),
@@ -66,6 +95,12 @@ class Store:
         # An interrupted send must not be retried automatically after a restart.
         if self.db.execute("SELECT 1 FROM deliveries WHERE status='pending'").fetchone():
             self.db.execute("UPDATE deliveries SET status='uncertain', detail='process_restart' WHERE status='pending'")
+            self.set('active', False)
+        if self.db.execute("SELECT 1 FROM followups WHERE status='pending'").fetchone():
+            self.db.execute("UPDATE followups SET status='uncertain', detail='process_restart' WHERE status='pending'")
+            self.set('active', False)
+        if self.db.execute("SELECT 1 FROM quote_holds WHERE status='pending'").fetchone():
+            self.db.execute("UPDATE quote_holds SET status='uncertain', detail='process_restart' WHERE status='pending'")
             self.set('active', False)
 
     def get(self, key: str, default=None):
@@ -208,7 +243,9 @@ class Store:
                         (status, detail[:120], chat_id, message_id))
 
     def sent_since(self, since: float) -> int:
-        return self.db.execute("SELECT COUNT(*) FROM deliveries WHERE status='sent' AND created>?", (since,)).fetchone()[0]
+        return self.db.execute('''SELECT
+            (SELECT COUNT(*) FROM deliveries WHERE status='sent' AND created>?) +
+            (SELECT COUNT(*) FROM followups WHERE status='sent' AND created>?)''', (since, since)).fetchone()[0]
 
     def recent(self) -> list[dict]:
         return [dict(row) for row in self.db.execute("SELECT chat_id,message_id,status,detail,created FROM deliveries ORDER BY created DESC LIMIT 10")]
@@ -240,8 +277,167 @@ class Store:
         rows = self.db.execute('SELECT * FROM message_checks WHERE chat_id=? ORDER BY observed DESC, rowid DESC LIMIT 5', (chat_id,)) if chat_id is not None else self.db.execute('SELECT * FROM message_checks ORDER BY observed DESC, rowid DESC LIMIT 5')
         return [dict(row) for row in rows]
 
+    def save_quote(self, account_id: int, sender_id: int, chat_id: int, message_id: int,
+                   request_text: str, products: list[Product], now: float | None = None,
+                   sent_message_ids=()) -> int:
+        """Persist the actual quoted prices, never a reference to the live catalog."""
+        if account_id <= 0 or sender_id <= 0 or not products:
+            raise ValueError('A quote requires an account, buyer and products')
+        now = time.time() if now is None else now
+        serialized = json.dumps([
+            {'name': p.name, 'price': str(p.price) if p.price is not None else None,
+             'stock': p.stock, 'sku': p.sku, 'country': p.country,
+             'price_country': p.price_country, 'min_qty': p.min_qty, 'warnings': p.warnings}
+            for p in products
+        ], ensure_ascii=False)
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self._prune_quote_context(now)
+            self.db.execute('''INSERT OR IGNORE INTO quotes
+                (account_id,sender_id,chat_id,message_id,request_text,products,created)
+                VALUES (?,?,?,?,?,?,?)''',
+                (account_id, sender_id, chat_id, message_id, request_text, serialized, now))
+            row = self.db.execute('''SELECT quote_id,sender_id FROM quotes
+                WHERE account_id=? AND chat_id=? AND message_id=?''',
+                (account_id, chat_id, message_id)).fetchone()
+            if row['sender_id'] != sender_id:
+                raise ValueError('The source request belongs to another buyer')
+            quote_id = row['quote_id']
+            self.db.executemany('''INSERT OR IGNORE INTO quote_messages
+                (account_id,sender_id,message_id,quote_id) VALUES (?,?,?,?)''',
+                [(account_id, sender_id, sent_id, quote_id) for sent_id in (sent_message_ids or ())])
+            self.db.execute('COMMIT')
+            return quote_id
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    def _read_quote(self, row):
+        if row is None:
+            return None
+        quote = dict(row)
+        quote['products'] = [Product(p['name'], Decimal(p['price']) if p['price'] is not None else None,
+                                     p['stock'], p['sku'], p['country'], p['price_country'],
+                                     p['min_qty'], tuple(p['warnings'])) for p in json.loads(row['products'])]
+        quote['sent_message_ids'] = [r[0] for r in self.db.execute(
+            'SELECT message_id FROM quote_messages WHERE quote_id=? ORDER BY message_id', (row['quote_id'],))]
+        return quote
+
+    @staticmethod
+    def _quote_cutoff(now: float | None, max_age: float):
+        now = time.time() if now is None else now
+        if max_age < 0:
+            raise ValueError('max_age must not be negative')
+        return now, now - min(max_age, 86400)
+
+    def latest_quote(self, account_id: int, sender_id: int, now: float | None = None,
+                     max_age: float = 86400):
+        now, cutoff = self._quote_cutoff(now, max_age)
+        return self._read_quote(self.db.execute('''SELECT * FROM quotes
+            WHERE account_id=? AND sender_id=? AND created>=? AND created<=?
+            ORDER BY created DESC, quote_id DESC LIMIT 1''', (account_id, sender_id, cutoff, now)).fetchone())
+
+    def quote_for_reply(self, account_id: int, sender_id: int, sent_message_id: int,
+                        now: float | None = None, max_age: float = 86400):
+        now, cutoff = self._quote_cutoff(now, max_age)
+        return self._read_quote(self.db.execute('''SELECT quotes.* FROM quotes JOIN quote_messages
+            ON quote_messages.quote_id=quotes.quote_id
+            WHERE quote_messages.account_id=? AND quote_messages.sender_id=? AND quote_messages.message_id=?
+              AND quotes.account_id=? AND quotes.sender_id=? AND quotes.created>=? AND quotes.created<=?''',
+            (account_id, sender_id, sent_message_id, account_id, sender_id, cutoff, now)).fetchone())
+
+    def reserve_followup(self, account_id: int, sender_id: int, message_id: int,
+                         quote_id: int, kind: str, now: float | None = None) -> bool:
+        if kind not in {'discount', 'hold', 'clarify'}:
+            raise ValueError('Invalid follow-up kind')
+        now = time.time() if now is None else now
+        cursor = self.db.execute('''INSERT OR IGNORE INTO followups
+            (account_id,sender_id,message_id,quote_id,kind,status,created)
+            SELECT ?,?,?,?,?, 'pending', ? FROM quotes
+            WHERE quote_id=? AND account_id=? AND sender_id=? AND created>=? AND created<=?''',
+            (account_id, sender_id, message_id, quote_id, kind, now,
+             quote_id, account_id, sender_id, now - 86400, now))
+        return cursor.rowcount == 1
+
+    def finish_followup(self, account_id: int, sender_id: int, message_id: int,
+                        status: str, detail: str = '') -> bool:
+        if status not in {'sent', 'failed', 'uncertain'}:
+            raise ValueError('Invalid final follow-up status')
+        cursor = self.db.execute('''UPDATE followups SET status=?,detail=?
+            WHERE account_id=? AND sender_id=? AND message_id=? AND status='pending' ''',
+            (status, detail[:120], account_id, sender_id, message_id))
+        return cursor.rowcount == 1
+
+    def followup(self, account_id: int, sender_id: int, message_id: int):
+        row = self.db.execute('SELECT * FROM followups WHERE account_id=? AND sender_id=? AND message_id=?',
+                              (account_id, sender_id, message_id)).fetchone()
+        return dict(row) if row else None
+
+    def latest_followup(self, account_id: int, sender_id: int, quote_id: int):
+        row = self.db.execute('''SELECT * FROM followups
+            WHERE account_id=? AND sender_id=? AND quote_id=?
+            ORDER BY created DESC, message_id DESC LIMIT 1''', (account_id, sender_id, quote_id)).fetchone()
+        return dict(row) if row else None
+
+    def reserve_hold(self, account_id: int, sender_id: int, quote_id: int,
+                     products: list[Product], now: float | None = None) -> list[Product]:
+        """Reserve one owner notification per quoted offer, without changing stock."""
+        now = time.time() if now is None else now
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            row = self.db.execute('''SELECT * FROM quotes WHERE quote_id=? AND account_id=? AND sender_id=?
+                AND created>=? AND created<=?''', (quote_id, account_id, sender_id, now - 86400, now)).fetchone()
+            quote = self._read_quote(row)
+            snapshot = {self._hold_key(p): p for p in quote['products']} if quote else {}
+            reserved = []
+            for product in products:
+                key = self._hold_key(product)
+                if key not in snapshot or product != snapshot[key]:
+                    continue
+                cursor = self.db.execute('''INSERT OR IGNORE INTO quote_holds
+                    (account_id,sender_id,quote_id,product_key,status,created)
+                    VALUES (?,?,?,?,'pending',?)''', (account_id, sender_id, quote_id, key, now))
+                if cursor.rowcount == 1:
+                    reserved.append(snapshot[key])
+            self.db.execute('COMMIT')
+            return reserved
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    def finish_hold(self, account_id: int, sender_id: int, quote_id: int,
+                    products: list[Product], status: str, detail: str = '') -> int:
+        if status not in {'sent', 'failed', 'uncertain'}:
+            raise ValueError('Invalid final hold status')
+        cursor = self.db.executemany('''UPDATE quote_holds SET status=?,detail=?
+            WHERE account_id=? AND sender_id=? AND quote_id=? AND product_key=? AND status='pending' ''',
+            [(status, detail[:120], account_id, sender_id, quote_id, self._hold_key(p)) for p in products])
+        return cursor.rowcount
+
+    @staticmethod
+    def _hold_key(product: Product) -> str:
+        return json.dumps([product_key(product), product.sku,
+                           str(product.price) if product.price is not None else None],
+                          ensure_ascii=False, separators=(',', ':'))
+
+    def holds(self, account_id: int, sender_id: int, quote_id: int) -> list[dict]:
+        return [dict(row) for row in self.db.execute('''SELECT * FROM quote_holds
+            WHERE account_id=? AND sender_id=? AND quote_id=? ORDER BY created, rowid''',
+            (account_id, sender_id, quote_id))]
+
+    def _prune_quote_context(self, now: float):
+        self.db.execute('DELETE FROM quotes WHERE created<?', (now - 86400,))
+        self.db.execute('DELETE FROM quote_messages WHERE quote_id NOT IN (SELECT quote_id FROM quotes)')
+        # Retain dedup metadata longer than quote context to protect replays.
+        self.db.execute('DELETE FROM followups WHERE created<?', (now - 30*86400,))
+        self.db.execute('DELETE FROM quote_holds WHERE created<?', (now - 30*86400,))
+
     def prune(self):
-        self.db.execute("DELETE FROM deliveries WHERE created<? AND status IN ('sent','failed','cancelled')", (time.time() - 30*86400,))
+        now = time.time()
+        self.db.execute("DELETE FROM deliveries WHERE created<? AND status IN ('sent','failed','cancelled')", (now - 30*86400,))
+        # Keep message dedup metadata longer than quote context, so pruning an
+        # expired quote cannot turn a replay into a new reply to a newer quote.
+        self._prune_quote_context(now)
 
     def close(self):
         self.db.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import html
 import logging
 import math
 import os
@@ -36,9 +37,10 @@ from .group_directory import GroupDirectory, search_groups
 from .monitor_diagnostics import diagnose_chat, reason_label
 from .update_state import checkpoint_update_state, restore_channel_updates
 from .message_chunks import split_messages
+from .conversations import ConversationReplies, user_tag
 
 log = logging.getLogger(__name__)
-RELEASE = '2026-10-26-all-matches'
+RELEASE = '2026-10-27-reservations'
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,8 @@ class Application:
         self.price_schedule = PriceSchedule(store, config.price_interval)
         self.engine = Engine(store, self.send_reply, max_per_minute=config.max_per_minute,
                              dedup_seconds=config.dedup_seconds, contact=config.contact)
+        self.conversations = ConversationReplies(store, self.send_reply, self.notify, self.engine.lock,
+                                                 max_per_minute=config.max_per_minute)
         self.price_sync = PriceSync(store, client, config.price_bot, self.notify, request_text=config.price_request,
                                     button_text=config.price_button, interval=self.price_schedule.interval) if config.price_bot else None
         if self.price_sync:
@@ -487,6 +491,7 @@ class Application:
             raise SendFailure('recipient_not_user', pause=False)
         parts = split_messages(text)
         sent_parts = 0
+        sent_ids = []
 
         def failure(reason, *, uncertain=False, pause=True):
             prefix = f'partial_{sent_parts}_of_{len(parts)}_parts;' if sent_parts else ''
@@ -496,9 +501,12 @@ class Application:
             for part in parts:
                 if sent_parts:
                     await asyncio.sleep(1)
-                await asyncio.wait_for(self.client.send_message(recipient, part, parse_mode=None,
-                                                                link_preview=False), timeout=30)
+                sent = await asyncio.wait_for(self.client.send_message(recipient, part, parse_mode=None,
+                                                                       link_preview=False), timeout=30)
                 sent_parts += 1
+                sent_id = getattr(sent, 'id', None)
+                if type(sent_id) is int:
+                    sent_ids.append(sent_id)
         except (FloodWaitError, errors.FloodPremiumWaitError) as exc:
             raise failure(f'flood_wait_{exc.seconds}s') from exc
         except (errors.UserPrivacyRestrictedError, errors.UserIsBlockedError,
@@ -509,12 +517,38 @@ class Application:
             raise failure(type(exc).__name__) from exc
         except (OSError, asyncio.TimeoutError) as exc:
             raise failure(type(exc).__name__, uncertain=True) from exc
+        return sent_ids
 
-    async def notify(self, text: str):
+    async def notify(self, text: str, *, parse_mode=None):
         try:
-            await self.bot.send_message(self.config.owner_id, text[:4000], parse_mode=None)
+            await self.bot.send_message(self.config.owner_id, text if parse_mode else text[:4000], parse_mode=parse_mode)
+            return True
         except TelegramAPIError as exc:
             log.warning('Owner notification failed: %s', type(exc).__name__)
+            return False
+
+    async def private_reply(self, event):
+        if (not event.is_private or event.out or not self.auth.ready
+                or not self.account_available.is_set() or not self.store.get('active', False)):
+            return
+        try:
+            sender = await asyncio.wait_for(event.get_sender(), 10)
+            if not isinstance(sender, types.User) or sender.bot or sender.id == self.store.get('telegram_account_id'):
+                return
+            incoming = Incoming(event.chat_id, event.id, sender.id, event.raw_text or '', event.date.timestamp(),
+                                is_group=False, forwarded=bool(event.message.fwd_from))
+            result = await self.conversations.process(incoming, sender, event.message.reply_to_msg_id)
+            if result in {'failed', 'uncertain', 'notice_failed'}:
+                await self.notify(f'Не удалось завершить ответ в личке: {user_tag(sender)}.\n'
+                                  f'Результат: {result}. Ответы '
+                                  + ('на паузе.' if not self.store.get('active', False) else 'другим пользователям продолжаются.'),
+                                  parse_mode='HTML')
+        except (RPCError, OSError, asyncio.TimeoutError) as exc:
+            log.warning('Private reply sender lookup failed: %s', type(exc).__name__)
+        except Exception as exc:
+            self.store.set('active', False)
+            log.error('Private reply processing failed: %s', type(exc).__name__)
+            await self.notify('⏸ Ответы приостановлены из-за ошибки обработки диалога. Проверь журналы приложения.')
 
     async def monitor(self, event):
         if event.chat_id not in self.store.chats():
@@ -570,19 +604,22 @@ class Application:
             record(result)
             if result == 'sent':
                 title = self.store.chats().get(event.chat_id, str(event.chat_id))
-                await self.notify(f'✅ Цена отправлена автору в личку\nПолучатель: {event.sender_id}\n'
-                                  f'Запрос из группы: {title}\nСообщение: {event.id}')
+                await self.notify(f'✅ Цена отправлена автору в личку\nПолучатель: {user_tag(sender)}\n'
+                                  f'Запрос из группы: {html.escape(title[:180])}\nСообщение: {event.id}', parse_mode='HTML')
             elif result in {'failed', 'uncertain'}:
                 delivery = self.store.delivery(chat_id, message_id)
                 detail = delivery['detail'] if delivery else result
                 record(result, detail)
                 if not self.store.get('active', False):
-                    await self.notify(f'⏸ Ответы приостановлены. Результат: {result}; {detail}.\n'
-                                      'Проверь /tail. Для возобновления: /run. Повторной отправки этого сообщения не будет.')
+                    await self.notify(f'⏸ Ответы приостановлены. Покупатель: {user_tag(sender)}.\n'
+                                      f'Результат: {result}; {html.escape(detail)}.\n'
+                                      'Проверь /tail. Для возобновления: /run. Повторной отправки этого сообщения не будет.',
+                                      parse_mode='HTML')
                 else:
-                    await self.notify(f'Не удалось отправить цену автору в личку. Причина: {detail}.\n'
+                    await self.notify(f'Не удалось отправить цену в личку: {user_tag(sender)}.\n'
+                                      f'Причина: {html.escape(detail)}.\n'
                                       f'Запрос: чат {chat_id}, сообщение {message_id}.\n'
-                                      'Ответы другим пользователям продолжаются. Подробности: /tail.')
+                                      'Ответы другим пользователям продолжаются. Подробности: /tail.', parse_mode='HTML')
         except Exception as exc:
             record('error', type(exc).__name__)
             log.error('Monitor error: %s', type(exc).__name__)
@@ -645,6 +682,7 @@ class Application:
                 f"Названия без «куплю»: {'учитываются' if self.store.get('allow_bare', True) else 'пропускаются'}\n"
                 'Куда отвечаем: в личку автору запроса, от подключённого аккаунта.\n'
                 f'Лимит: {self.config.max_per_minute} ответов в минуту.\n'
+                'В личке после цены: на скидку — «Нет», на бронь — «Ок» и уведомление владельцу.\n'
                 'Остаток не уменьшается при предложении товара.\n\n' +
                 format_policy(self.store.markup_policy()))
 
@@ -1220,6 +1258,7 @@ async def run(config: Config):
         # Own messages are observed for diagnostics, but monitor/Engine never
         # answer them. This makes self-tests distinguishable from lost updates.
         client.add_event_handler(app.monitor, events.NewMessage())
+        client.add_event_handler(app.private_reply, events.NewMessage(incoming=True))
         if app.price_sync:
             client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
             client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))

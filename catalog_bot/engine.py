@@ -31,7 +31,7 @@ class SendFailure(Exception):
 
 
 class Engine:
-    def __init__(self, store: Store, send: Callable[[int, int, str], Awaitable[None]],
+    def __init__(self, store: Store, send: Callable[[int, int, str], Awaitable[list[int] | None]],
                  *, dedup_seconds: int = 120, max_per_minute: int = 10, max_age: int = 120,
                  contact: str = "", clock: Callable[[], float] = time.time):
         self.store, self.send = store, send
@@ -76,7 +76,11 @@ class Engine:
                 # Send to the requesting user. The second argument identifies
                 # the source request; it is not a reply ID in the private chat.
                 # Reservations and history remain keyed by the source group.
-                await self.send(message.sender_id, message.message_id, reply)
+                sent_ids = await self.send(message.sender_id, message.message_id, reply)
+                account_id = self.store.get('telegram_account_id', 0)
+                if account_id:
+                    self.store.save_quote(account_id, message.sender_id, message.chat_id, message.message_id,
+                                          message.text, found, now=now, sent_message_ids=sent_ids or ())
             except SendFailure as exc:
                 self.store.finish(message.chat_id, message.message_id, 'uncertain' if exc.uncertain else 'failed', str(exc))
                 if exc.uncertain or exc.pause:
