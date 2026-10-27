@@ -532,6 +532,32 @@ def product_identifiers(product: Product) -> dict[str, set[str]]:
     return identifiers
 
 
+RAYBAN_LINES = frozenset({'wayfarer', 'skyler', 'headliner', 'scriber', 'blayzer'})
+
+
+def rayban_broad_request(spec: Spec) -> bool:
+    """Allow a Ray-Ban range or a known frame line without inventing a model."""
+    if spec.brand != 'rayban' or spec.family != 'generic' or spec.category != 'device':
+        return False
+    return all(token in RAYBAN_LINES or re.fullmatch(r'\d+|s\d{2}', token)
+               for token in spec.model)
+
+
+def rayban_broad_reason(request: Spec, item: Spec, clean: str, name: str) -> str | None:
+    if item.brand != 'rayban' or item.family != 'generic':
+        return 'бренд'
+    # Restrict this broad search to glasses, excluding compatible accessories.
+    if not item.model.intersection(RAYBAN_LINES):
+        return 'линейка очков'
+    if 'meta' in words(clean) and 'meta' not in words(name):
+        return 'Meta'
+    if not request.model.issubset(item.model):
+        return 'линейка / поколение / размер'
+    if request.variants and request.variants != item.variants:
+        return 'версия модели'
+    return None
+
+
 def inspect_request(text: str, products: list[Product], allow_bare: bool = True) -> MatchReport:
     classification = intent(text, allow_bare)
     report = MatchReport(classification, [], [])
@@ -552,6 +578,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
         if normalization_notes:
             report.details.append('Нормализация: ' + '; '.join(normalization_notes))
         request = parse_spec(clean)
+        rayban_range = not requested_skus and rayban_broad_request(request)
         if requested_skus:
             report.details.append('Точный артикул: ' + ', '.join(sorted(requested_skus)))
         report.details.append(describe_spec(request))
@@ -560,7 +587,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
         named_model = (len(request.model) >= 2 or (request.brand is not None and bool(request.model))) and any(
             request.model == parse_spec(p.name).model and request.variants == parse_spec(p.name).variants
             for p in products)
-        if not requested_skus and (not request.model or (request.family == 'generic' and not named_model and not any(
+        if not requested_skus and not rayban_range and (not request.model or (request.family == 'generic' and not named_model and not any(
                 re.search(r'\d', t) or re.fullmatch(r'[ivx]+', t) for t in request.model))):
             issues.append('не указана конкретная модель или артикул')
         if request.family == 'iphone' and 'iphone' not in words(clean) and not requested_skus:
@@ -595,6 +622,8 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
                         reason = 'признаки рядом с артикулом'
                     elif request.variants and request.variants != item.variants:
                         reason = 'версия модели'
+            elif rayban_range:
+                reason = rayban_broad_reason(request, item, clean, product.name)
             else:
                 reason = model_reason(request, item)
             # Only explain attribute failures for the requested model.
