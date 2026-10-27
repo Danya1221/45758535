@@ -92,7 +92,12 @@ _CONTEXTUAL = {_base(alias): _base(target) for target, aliases in DATA['contextu
 _SHORT_VERSION = re.compile(r'(?<!\w)(\d{1,2})\s*(' + _pattern(_CONTEXTUAL) + r')(?!\w)')
 _FUZZY = {_base(alias): _base(target) for target in DATA['fuzzy_brands']
           for alias in [target, *DATA['brands'][target]]
-          if _base(alias).isalpha() and len(_base(alias)) >= 6}
+          if _base(alias).isalpha() and len(_base(alias)) >= 4}
+_REQUEST_WORDS = {(_base(alias), _base(target))
+                  for group in ('versions', 'series', 'colors')
+                  for target, aliases in DATA[group].items()
+                  for alias in [target, *aliases]
+                  if _base(alias).isalpha() and len(_base(alias)) >= 5}
 _UNITS = {_base(alias): target for target, aliases in DATA.get('units', {
     'gb': ['gb', 'гб'], 'tb': ['tb', 'тб'], 'mm': ['mm', 'мм']}).items() for alias in aliases}
 _UNIT_PATTERN = re.compile(r'\b(\d+)\s*(' + _pattern(_UNITS) + r')\b')
@@ -179,6 +184,10 @@ def normalize_with_notes(value: str) -> tuple[str, tuple[str, ...]]:
     lines = []
     for line in text.split('\n'):
         if re.search(r'\d', line):
+            # Explicitly observed short typos are only meaningful next to a
+            # model number; never change digits or opaque supplier codes.
+            line = re.sub(r'(?<![\w-])(?:пко|pco|poko|pokoo)(?![\w-])',
+                          lambda m: record(m[0], 'poco'), line)
             def correct(match):
                 token = match[0]
                 target = _fuzzy_brand(token)
@@ -225,6 +234,42 @@ def normalize_with_notes(value: str) -> tuple[str, tuple[str, ...]]:
 
 def normalize_text(value: str) -> str:
     return normalize_with_notes(value)[0]
+
+
+@lru_cache(maxsize=4096)
+def _request_word_typo(token: str) -> str | None:
+    common_short_typos = {'blak': 'black', 'bule': 'blue', 'whte': 'white'}
+    if token in common_short_typos:
+        return common_short_typos[token]
+    if len(token) < 5 or not token.isalpha() or token in ALIASES:
+        return None
+    matches = {target for alias, target in _REQUEST_WORDS if _one_edit(token, alias)}
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def normalize_request_with_notes(value: str) -> tuple[str, tuple[str, ...]]:
+    """Correct unique one-letter word typos only in branded model requests.
+
+    Applied to incoming requests, not the supplier catalog. Digits and codes
+    are never edited; ambiguous corrections are left untouched.
+    """
+    text, original_notes = normalize_with_notes(value)
+    if not re.search(r'\d', text) or not any(t in BRAND_OWNERS for t in re.findall(r'\w+', text)):
+        return text, original_notes
+    notes = list(original_notes)
+
+    def correct(match):
+        token = match[0]
+        target = _request_word_typo(token)
+        if target:
+            note = f'{token} → {target}'
+            if note not in notes:
+                notes.append(note)
+            return target
+        return token
+
+    text = re.sub(r'(?<![\w/-])[a-zа-яё]{4,}(?![\w/-])', correct, text)
+    return text, tuple(notes)
 
 
 def lexicon_stats() -> dict[str, int]:

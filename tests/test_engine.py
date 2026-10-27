@@ -70,6 +70,18 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('52 000 ₽', response)
         self.assertNotIn('POCO F8', response)
 
+    async def test_poco_f8_request_without_version_sends_actual_ultra_prices(self):
+        self.store.replace_products(parse_catalog('POCO F8 Ultra 12/256 Black|53200|1\n'
+                                                  'POCO F8 Ultra 12/256 Denim Blue slim|51900|1\n'
+                                                  'POCO F9 Pro 12/256 Green|52000|1'))
+        self.assertEqual(await self.engine.process(self.incoming(text='поко ф8')), 'sent')
+        recipient, _, response = self.sent[-1]
+        self.assertEqual(recipient, 55)
+        self.assertIn('POCO F8 Ultra 12/256 Black', response)
+        self.assertIn('53 200 ₽', response)
+        self.assertIn('51 900 ₽', response)
+        self.assertNotIn('POCO F9', response)
+
     async def test_unselected_old_outgoing_bot_private_and_forwarded_are_ignored(self):
         for changes in [dict(chat_id=999), dict(timestamp=100), dict(outgoing=True), dict(is_bot=True), dict(is_group=False), dict(forwarded=True)]:
             with self.subTest(changes=changes):

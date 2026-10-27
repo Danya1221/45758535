@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 
 
-from .lexicon import ALIASES, BRAND_OWNERS, COLORS, normalize_text, normalize_with_notes
+from .lexicon import ALIASES, BRAND_OWNERS, COLORS, normalize_text, normalize_request_with_notes
 
 
 VARIANTS = frozenset("pro max plus ultra mini lite air edge se xl fold fe".split())
@@ -641,7 +641,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
         # for that condition, brand, color or version. Words next to it remain.
         specification_text = IDENTIFIER_TOKEN.sub(
             lambda match: identifier_specification(match[0]) if code_key(match[0]) in requested_skus else match[0], segment)
-        normalized, normalization_notes = normalize_with_notes(specification_text)
+        normalized, normalization_notes = normalize_request_with_notes(specification_text)
         clean = clean_request(normalized)
         if normalization_notes:
             report.details.append('Нормализация: ' + '; '.join(normalization_notes))
@@ -680,11 +680,13 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
             continue
         rejected: dict[str, int] = {}
         candidates: list[Product] = []
+        other_versions: list[Product] = []
         for product in products:
             item = parse_spec(product.name)
             matched_codes = requested_skus.intersection(identifiers[product])
             sku_match = bool(matched_codes)
             reason = None
+            other_version = False
             if requested_skus and not sku_match:
                 reason = 'артикул'
             elif sku_match:
@@ -704,6 +706,13 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
                 reason = sony_xm_reason(request, item, product.name)
             else:
                 reason = model_reason(request, item)
+                # Consider other POCO versions only if no exact base offer is
+                # available; never loosen an explicitly requested Pro/Ultra.
+                if (reason == 'версия модели' and request.family == 'generic'
+                        and request.product_line == 'poco' and not request.variants
+                        and any(re.fullmatch(r'[fxmc]\d{1,3}', t) for t in request.model)):
+                    reason = None
+                    other_version = True
             # Only explain attribute failures for the requested model.
             if reason:
                 rejected[reason] = rejected.get(reason, 0) + 1
@@ -725,7 +734,10 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
             if reason:
                 rejected[reason] = rejected.get(reason, 0) + 1
                 continue
-            candidates.append(product)
+            (other_versions if other_version else candidates).append(product)
+        if not candidates and other_versions:
+            candidates = other_versions
+            report.details.append('Базовая версия не найдена; показаны доступные версии этой модели с полными названиями.')
         candidate_identities = {(parse_spec(p.name).brand, parse_spec(p.name).product_line) for p in candidates}
         if request.category == 'device' and request.brand is None and len(candidate_identities) > 1:
             report.details.append('Пропущено: название подходит нескольким брендам; укажите бренд.')
