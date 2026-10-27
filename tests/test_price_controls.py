@@ -242,4 +242,4 @@ class PriceControlTests(unittest.IsolatedAsyncioTestCase):
         self.app.auth.ready = False
         await self.callback('price')
         self.assertEqual(self.client.calls, [])
-        self.assertIn('/login', self.texts()[-1])
+        self.assertIn('/pricelogin', self.texts()[-1])

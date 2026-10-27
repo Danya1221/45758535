@@ -38,9 +38,10 @@ from .monitor_diagnostics import diagnose_chat, reason_label
 from .update_state import checkpoint_update_state, restore_channel_updates
 from .message_chunks import split_messages
 from .conversations import ConversationReplies, user_tag
+from .account_roles import prepare_account_roles
 
 log = logging.getLogger(__name__)
-RELEASE = '2026-10-27-quoted-reservations'
+RELEASE = '2026-10-27-separate-accounts'
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,8 @@ def keyboard(rows: list[list[tuple[str, str]]]):
 
 def menu():
     return keyboard([
-        [('🔐 По номеру', 'login'), ('📷 Войти по QR', 'loginqr')],
+        [('👤 Вход для ответов', 'loginqr'), ('💰 Вход для прайса', 'priceloginqr')],
+        [('🔐 Ответы: номер', 'login'), ('🔐 Прайс: номер', 'pricelogin')],
         [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats_all')],
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
@@ -152,15 +154,24 @@ CATALOG_PROMPT = (
 
 
 class Application:
-    def __init__(self, config: Config, store: Store, client: TelegramClient, bot: Bot):
+    def __init__(self, config: Config, store: Store, client: TelegramClient, bot: Bot,
+                 *, price_client: TelegramClient | None = None):
         self.config, self.store, self.client, self.bot = config, store, client, bot
+        self.separate_accounts = price_client is not None
+        self.price_client = price_client if price_client is not None else client
         self.dp = Dispatcher()
         self.dp.message.outer_middleware(OwnerOnly(config.owner_id))
         self.dp.callback_query.outer_middleware(OwnerOnly(config.owner_id))
         self.account_available = asyncio.Event()
         self.account_changed = asyncio.Event()
         self.refresh_requested = asyncio.Event()
-        self.auth = AccountLogin(client, config.data_dir, self.account_ready)
+        self.auth = AccountLogin(client, config.data_dir / 'replies' if self.separate_accounts else config.data_dir,
+                                 self.account_ready)
+        self.price_account_available = asyncio.Event() if self.separate_accounts else self.account_available
+        self.price_account_changed = asyncio.Event() if self.separate_accounts else self.account_changed
+        self.price_auth = (AccountLogin(self.price_client, config.data_dir, self.price_account_ready)
+                           if self.separate_accounts else self.auth)
+        self.login_target = 'reply'
         self.qr_task: asyncio.Task | None = None
         self.chat_ui_lock = asyncio.Lock()
         self.chat_origin = self.chat_panel = None
@@ -175,7 +186,7 @@ class Application:
                              dedup_seconds=config.dedup_seconds, contact=config.contact)
         self.conversations = ConversationReplies(store, self.send_reply, self.notify, self.engine.lock,
                                                  max_per_minute=config.max_per_minute)
-        self.price_sync = PriceSync(store, client, config.price_bot, self.notify, request_text=config.price_request,
+        self.price_sync = PriceSync(store, self.price_client, config.price_bot, self.notify, request_text=config.price_request,
                                     button_text=config.price_button, interval=self.price_schedule.interval) if config.price_bot else None
         if self.price_sync:
             store.set('price_ready', False)
@@ -190,19 +201,73 @@ class Application:
         self.group_directory.bind(int(user.id))
         self.store.set('telegram_account_id', int(user.id))
         self.store.set('telegram_account_name', getattr(user, 'username', None) or getattr(user, 'first_name', None) or str(user.id))
-        if self.price_sync:
+        if self.price_sync and not self.separate_accounts:
             self.price_sync.peer = None
             self.store.set('price_ready', False)
         self.account_available.set()
         self.account_changed.set()
+        if not self.separate_accounts:
+            self.price_schedule.mark_due()
+            self.refresh_requested.set()
+
+    async def price_account_ready(self, user):
+        self.store.set('price_account_id', int(user.id))
+        self.store.set('price_account_name', getattr(user, 'username', None) or getattr(user, 'first_name', None) or str(user.id))
+        if self.price_sync:
+            self.price_sync.peer = None
+            self.store.set('price_ready', False)
+        self.price_account_available.set()
+        self.price_account_changed.set()
         self.price_schedule.mark_due()
         self.refresh_requested.set()
+
+    def price_account_unavailable(self, *, authorization_lost=False):
+        self.price_account_available.clear()
+        self.refresh_requested.set()
+        if self.price_sync:
+            self.store.set('price_ready', False)
+        if authorization_lost:
+            self.price_auth.ready, self.price_auth.user = False, None
+
+    async def price_account_loop(self):
+        while True:
+            self.price_account_changed.clear()
+            was_ready, retry_delay = self.price_auth.ready, 30
+            try:
+                ready = await self.price_auth.restore()
+                if ready:
+                    if not self.price_account_available.is_set():
+                        self.price_account_available.set()
+                        if self.price_sync:
+                            self.store.set('price_ready', False)
+                        self.price_schedule.mark_due()
+                        self.refresh_requested.set()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(self.price_client.disconnected), 30)
+                    except asyncio.TimeoutError:
+                        continue
+                    self.price_account_unavailable()
+                else:
+                    self.price_account_unavailable(authorization_lost=True)
+                    if was_ready:
+                        await self.notify('Аккаунт прайса потерял авторизацию. Вход: /priceloginqr. Аккаунт ответов сохранён.')
+            except (RPCError, OSError, asyncio.TimeoutError, ValueError, LoginError) as exc:
+                log.warning('Price account connection: %s', type(exc).__name__)
+                self.price_account_unavailable(authorization_lost=isinstance(exc, RPCError) and getattr(exc, 'code', None) == 401)
+                if isinstance(exc, (FloodWaitError, errors.FloodPremiumWaitError)):
+                    self.price_auth.retry_until = time.monotonic() + exc.seconds
+                    retry_delay = max(retry_delay, exc.seconds)
+            try:
+                await asyncio.wait_for(self.price_account_changed.wait(), retry_delay)
+            except asyncio.TimeoutError:
+                pass
 
     def account_unavailable(self, *, authorization_lost=False):
         self.updates_checked = False
         self.account_available.clear()
-        self.refresh_requested.set()
-        if self.price_sync:
+        if not self.separate_accounts:
+            self.refresh_requested.set()
+        if self.price_sync and not self.separate_accounts:
             self.store.set('price_ready', False)
         if authorization_lost:
             self.group_directory.cancel()
@@ -218,11 +283,12 @@ class Application:
                 ready = await self.auth.restore()
                 if ready:
                     if not self.account_available.is_set():
-                        if self.price_sync:
+                        if self.price_sync and not self.separate_accounts:
                             self.store.set('price_ready', False)
                         self.account_available.set()
-                        self.price_schedule.mark_due()
-                        self.refresh_requested.set()
+                        if not self.separate_accounts:
+                            self.price_schedule.mark_due()
+                            self.refresh_requested.set()
                     try:
                         await asyncio.wait_for(asyncio.shield(self.client.disconnected), 30)
                     except asyncio.TimeoutError:
@@ -247,7 +313,7 @@ class Application:
 
     async def price_loop(self):
         while True:
-            await self.account_available.wait()
+            await self.price_account_available.wait()
             self.refresh_requested.clear()
             delay = self.price_schedule.remaining()
             if delay is not None:
@@ -279,7 +345,7 @@ class Application:
             await message.answer('Источник прайса не настроен. Добавь PRICE_BOT_USERNAME и команду PRICE_REQUEST_TEXT в Railway.\n'
                                  'Загрузить прайс вручную: /uploadprice.', reply_markup=menu())
             return
-        if not await self.require_account(message):
+        if not await self.require_price_account(message):
             return
         await state.clear()
         if self.price_source_busy():
@@ -297,8 +363,8 @@ class Application:
         interval = self.price_schedule.interval
         period = f'{interval // 60} мин' if interval % 60 == 0 else f'{interval} сек'
         text = f'Автообновление: каждые {period}.'
-        if not self.account_available.is_set():
-            return text + '\nСледующий запрос: после подключения аккаунта.'
+        if not self.price_account_available.is_set():
+            return text + '\nСледующий запрос: после подключения аккаунта прайса.'
         if self.price_source_busy():
             return text + '\nСейчас загружаю прайс.'
         remaining = max(self.price_schedule.remaining() or 0, self.price_sync.retry_after - time.monotonic())
@@ -358,78 +424,114 @@ class Application:
             return False
         return True
 
+    async def require_price_account(self, message: Message) -> bool:
+        if not self.price_auth.ready:
+            await message.answer('Сначала подключи аккаунт с доступом к прайсу: /priceloginqr или /pricelogin.')
+            return False
+        if not self.price_account_available.is_set() or not self.price_client.is_connected():
+            await message.answer('Соединение с аккаунтом прайса восстанавливается. Проверь /status немного позже.')
+            return False
+        return True
+
+    def login_auth(self, role):
+        return self.price_auth if role == 'price' else self.auth
+
+    @staticmethod
+    def login_error(exc, role):
+        text = str(exc)
+        return text.replace('/loginqr', '/priceloginqr').replace('/login', '/pricelogin') if role == 'price' else text
+
     def cancel_login(self):
         self.auth.cancel()
+        if self.price_auth is not self.auth:
+            self.price_auth.cancel()
         task, self.qr_task = self.qr_task, None
         if task and not task.done():
             task.cancel()
         return task
 
-    async def begin_login(self, message: Message, state: FSMContext):
+    async def begin_login(self, message: Message, state: FSMContext, role='reply'):
         self.cancel_login()
         await state.clear()
+        self.login_target = role
+        await state.update_data(login_role=role)
+        auth = self.login_auth(role)
         try:
-            phase = await self.auth.begin()
+            phase = await auth.begin()
         except LoginError as exc:
-            await message.answer(str(exc))
+            await message.answer(self.login_error(exc, role))
             return
         if phase == 'ready':
-            await message.answer(f'✅ Аккаунт уже подключён. Telegram ID: {self.auth.user.id}.\nДальше: /markup и /chats.', reply_markup=menu())
+            await message.answer(f'✅ Аккаунт уже подключён {"для прайса" if role == "price" else "для ответов"}. '
+                                 f'Telegram ID: {auth.user.id}.\nДальше: {"/price" if role == "price" else "/markup и /chats"}.', reply_markup=menu())
             return
-        self.store.set('active', False)
-        self.account_available.clear()
+        if role == 'price':
+            self.price_account_unavailable()
+        else:
+            self.store.set('active', False)
+            self.account_available.clear()
         await state.set_state(Inputs.login_phone)
-        await message.answer('Пришли номер аккаунта с кодом страны, например +79991234567.\n'
-                             'Если код не приходит: /loginqr. Отмена: /cancel.')
+        await message.answer(f'Вход {"для прайса: используй аккаунт с доступом к поставщику" if role == "price" else "для ответов: используй новый аккаунт продавца"}.\n'
+                             'Пришли номер с кодом страны, например +79991234567.\n'
+                             f'Если код не приходит: {"/priceloginqr" if role == "price" else "/loginqr"}. Отмена: /cancel.')
 
-    async def begin_login_qr(self, message: Message, state: FSMContext):
+    async def begin_login_qr(self, message: Message, state: FSMContext, role='reply'):
         self.cancel_login()
         await state.clear()
+        self.login_target = role
+        await state.update_data(login_role=role)
+        auth = self.login_auth(role)
         try:
-            generation = await self.auth.begin_qr()
+            generation = await auth.begin_qr()
         except LoginError as exc:
-            await message.answer(str(exc))
+            await message.answer(self.login_error(exc, role))
             return
         if generation is None:
-            await message.answer(f'✅ Аккаунт уже подключён. Telegram ID: {self.auth.user.id}.', reply_markup=menu())
+            await message.answer(f'✅ Аккаунт уже подключён {"для прайса" if role == "price" else "для ответов"}. '
+                                 f'Telegram ID: {auth.user.id}.', reply_markup=menu())
             return
-        self.store.set('active', False)
-        self.account_available.clear()
+        if role == 'price':
+            self.price_account_unavailable()
+        else:
+            self.store.set('active', False)
+            self.account_available.clear()
         await state.set_state(Inputs.login_qr)
-        self.qr_task = asyncio.create_task(self.qr_login_worker(message, state, generation))
+        self.qr_task = asyncio.create_task(self.qr_login_worker(message, state, generation, role))
 
-    async def qr_login_worker(self, message: Message, state: FSMContext, generation: int):
+    async def qr_login_worker(self, message: Message, state: FSMContext, generation: int, role='reply'):
         photo = None
-        caption = ('На телефоне открой Telegram → Настройки → Устройства → Подключить устройство.\n'
+        auth = self.login_auth(role)
+        caption = (f'Вход {"для прайса — аккаунт с доступом к поставщику" if role == "price" else "для ответов — новый аккаунт продавца"}.\n'
+                   'На телефоне переключись на нужный аккаунт Telegram → Настройки → Устройства → Подключить устройство.\n'
                    'Отсканируй этот QR с экрана компьютера и подтверди вход.\n'
                    'QR обновляется автоматически до 5 минут. Отмена: /cancel.')
         try:
             while True:
-                png = await asyncio.to_thread(qr_png, self.auth.qr_url(generation))
-                self.auth._check_generation(generation)
+                png = await asyncio.to_thread(qr_png, auth.qr_url(generation))
+                auth._check_generation(generation)
                 image = BufferedInputFile(png, filename='login_qr.png')
                 if photo is None:
                     photo = await message.answer_photo(image, caption=caption, protect_content=True)
                 else:
                     await photo.edit_media(InputMediaPhoto(media=image, caption=caption))
-                self.auth._check_generation(generation)
-                result = await self.auth.wait_qr(generation)
+                auth._check_generation(generation)
+                result = await auth.wait_qr(generation)
                 if result != 'refresh':
-                    await self.login_result(message, state, result)
+                    await self.login_result(message, state, result, role)
                     return
         except LoginError as exc:
             if self.qr_task is asyncio.current_task():
-                self.auth.cancel()
+                auth.cancel()
                 await state.clear()
-                await message.answer(str(exc))
+                await message.answer(self.login_error(exc, role))
         except Exception:
             # Never log the exception/request: they can contain the QR token.
             log.warning('QR login display failed; diagnostic=LOGIN/display_qr')
             if self.qr_task is asyncio.current_task():
-                self.auth.cancel()
+                auth.cancel()
                 await state.clear()
                 try:
-                    await message.answer('Не удалось показать QR или завершить вход. Повтори /loginqr.\n'
+                    await message.answer(f'Не удалось показать QR или завершить вход. Повтори {"/priceloginqr" if role == "price" else "/loginqr"}.\n'
                                          'Код диагностики: LOGIN/display_qr')
                 except TelegramAPIError:
                     pass
@@ -444,22 +546,26 @@ class Application:
 
     async def login_input(self, message: Message, state: FSMContext, phase: str):
         value = message.text or ''
+        role = (await state.get_data()).get('login_role', self.login_target)
+        auth = self.login_auth(role)
         if phase in {'code', 'password'}:
             try:
                 await message.delete()
             except TelegramAPIError:
                 pass
         try:
-            result = await getattr(self.auth, {'phone': 'phone_number', 'code': 'code', 'password': 'password'}[phase])(value)
+            result = await getattr(auth, {'phone': 'phone_number', 'code': 'code', 'password': 'password'}[phase])(value)
         except LoginError as exc:
             if exc.restart:
                 await state.clear()
-            await message.answer(str(exc), reply_markup=keyboard([[('📷 Войти по QR', 'loginqr')]]) if exc.restart else None)
+            await message.answer(self.login_error(exc, role), reply_markup=keyboard([
+                [('📷 Войти по QR', 'priceloginqr' if role == 'price' else 'loginqr')]]) if exc.restart else None)
             return
 
-        await self.login_result(message, state, result)
+        await self.login_result(message, state, result, role)
 
-    async def login_result(self, message: Message, state: FSMContext, result: str):
+    async def login_result(self, message: Message, state: FSMContext, result: str, role='reply'):
+        await state.update_data(login_role=role)
         if result == 'code':
             await state.set_state(Inputs.login_code)
             await message.answer('Telegram отправил код входа. Введи его цифры через пробелы, например 1 2 3 4 5.\n'
@@ -469,8 +575,12 @@ class Application:
             await message.answer('Включена двухэтапная проверка. Пришли пароль 2FA. Отмена: /cancel.')
         else:
             await state.clear()
-            await message.answer(f'✅ Аккаунт подключён. Telegram ID: {self.auth.user.id}. Авторизация сохранена.\n'
-                                 'Ответы пока выключены. Настрой /markup, выбери /chats и проверь /test. Включить: /run.', reply_markup=menu())
+            if role == 'price':
+                await message.answer('✅ Аккаунт подключён для прайса. Авторизация сохранена.\n'
+                                     'Запросить цены: /price. Таймер: /timer. Аккаунт ответов настраивается через /loginqr.', reply_markup=menu())
+            else:
+                await message.answer(f'✅ Аккаунт подключён. Telegram ID: {self.auth.user.id}. Авторизация сохранена для ответов.\n'
+                                     'Ответы пока выключены. Настрой /markup, выбери /chats и проверь /test. Включить: /run.', reply_markup=menu())
 
     async def send_reply(self, recipient_id: int, source_message_id: int, text: str):
         # The source message ID belongs to the group. It must never be used
@@ -673,10 +783,16 @@ class Application:
 
     def status(self) -> str:
         products = self.store.products()
+        price_account = ''
+        if self.separate_accounts:
+            price_name = self.store.get('price_account_name') or 'подключён'
+            price_account = (f'Аккаунт прайса: {price_name if self.price_auth.ready else "не подключён — /priceloginqr"}\n'
+                             f'Соединение прайса: {"есть" if self.price_account_available.is_set() and self.price_client.is_connected() else "нет"}\n')
         return ('📊 Статус\n'
                 f'Версия: {RELEASE}\n'
-                f"Аккаунт: {self.store.get('telegram_account_name', 'подключён') if self.auth.ready else 'не подключён — /login'}\n"
+                f"{'Аккаунт ответов' if self.separate_accounts else 'Аккаунт'}: {self.store.get('telegram_account_name') or 'подключён' if self.auth.ready else 'не подключён — /login'}\n"
                 f"Соединение: {'есть' if self.account_available.is_set() and self.client.is_connected() else 'нет'}\n"
+                + price_account +
                 f"Ответы: {'включены' if self.store.get('active', False) else 'пауза'}\n"
                 f'Позиций: {len(products)}, подходят для предложения: {sum(p.eligible for p in products)}\n'
                 f"Прайс: {'готов к использованию' if self.store.get('price_ready', True) else 'требует успешного обновления'}\n"
@@ -872,7 +988,7 @@ class Application:
         dp = self.dp
 
         @dp.message(Inputs.login_password, F.text,
-                    ~F.text.regexp(r'^/(?:cancel|login|loginqr|start|help)(?:@\w+)?(?:\s|$)'))
+                    ~F.text.regexp(r'^/(?:cancel|login|loginqr|pricelogin|priceloginqr|start|help)(?:@\w+)?(?:\s|$)'))
         async def login_password(message: Message, state: FSMContext):
             await self.login_input(message, state, 'password')
 
@@ -881,8 +997,9 @@ class Application:
             self.cancel_login()
             await state.clear()
             await message.answer('Бот находит запросы в выбранных группах и отправляет цены авторам в личку.\n\n'
-                                 'Подключить аккаунт: /login — номер, код, затем пароль 2FA при необходимости.\n\n'
-                                 '/loginqr — вход по QR через Telegram на телефоне, без запроса кода.\n\n'
+                                 'Аккаунт для ответов: /loginqr — QR или /login — номер, код и пароль 2FA.\n'
+                                 'Аккаунт с доступом к прайсу: /priceloginqr — QR или /pricelogin — номер.\n'
+                                 'При переносе старый вход сохраняется для прайса; для ответов войди новым аккаунтом.\n\n'
                                  '1. /price — запросить прайс у поставщика; /uploadprice — загрузить вручную.\n'
                                  '/timer — автообновление; /catalog — свой список.\n'
                                  '2. /markup — настроить наценку.\n3. /chats — выбрать группы.\n'
@@ -898,6 +1015,14 @@ class Application:
         @dp.message(Command('loginqr'))
         async def login_account_qr(message: Message, state: FSMContext):
             await self.begin_login_qr(message, state)
+
+        @dp.message(Command('pricelogin'))
+        async def login_price_account(message: Message, state: FSMContext):
+            await self.begin_login(message, state, 'price')
+
+        @dp.message(Command('priceloginqr'))
+        async def login_price_account_qr(message: Message, state: FSMContext):
+            await self.begin_login_qr(message, state, 'price')
 
         @dp.message(Command('price', 'refresh'))
         async def price(message: Message, state: FSMContext):
@@ -1076,6 +1201,10 @@ class Application:
                 await self.begin_login(message, state)
             elif action == 'loginqr':
                 await self.begin_login_qr(message, state)
+            elif action == 'pricelogin':
+                await self.begin_login(message, state, 'price')
+            elif action == 'priceloginqr':
+                await self.begin_login_qr(message, state, 'price')
             elif action == 'catalog':
                 await state.set_state(Inputs.catalog)
                 await message.answer(CATALOG_PROMPT)
@@ -1246,29 +1375,35 @@ async def login(config: Config):
 
 async def run(config: Config):
     store = Store(config.data_dir / 'catalog.sqlite3')
-    client = bot = app = None
+    client = price_client = bot = app = None
     tasks: list[asyncio.Task] = []
     try:
         session_path = config.data_dir / 'account.session'
         # Keep old StringSession deployments working, then use the persistent
         # account file on later boots. New deployments need no session variable.
-        if config.telegram_session and not (session_path.exists() and store.get('telegram_account_id')):
+        legacy_known = store.get('price_account_id') or (not store.get('role_split_initialized') and store.get('telegram_account_id'))
+        if config.telegram_session and not (session_path.exists() and legacy_known):
             persist_session(load_string_session(config.telegram_session), config.data_dir)
-        client = TelegramClient(str(config.data_dir / 'account'), config.api_id, config.api_hash,
+        reply_dir, price_dir = prepare_account_roles(store, config.data_dir)
+        price_client = TelegramClient(str(price_dir / 'account'), config.api_id, config.api_hash,
+                                      catch_up=False, flood_sleep_threshold=0, request_retries=0)
+        client = TelegramClient(str(reply_dir / 'account'), config.api_id, config.api_hash,
                                 catch_up=False, flood_sleep_threshold=0, request_retries=0)
-        if session_path.exists():
-            session_path.chmod(0o600)
+        for path in (price_dir / 'account.session', reply_dir / 'account.session'):
+            if path.exists():
+                path.chmod(0o600)
         bot = Bot(config.bot_token)
-        app = Application(config, store, client, bot)
+        app = Application(config, store, client, bot, price_client=price_client)
         # Own messages are observed for diagnostics, but monitor/Engine never
         # answer them. This makes self-tests distinguishable from lost updates.
         client.add_event_handler(app.monitor, events.NewMessage())
         client.add_event_handler(app.private_reply, events.NewMessage(incoming=True))
         if app.price_sync:
-            client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
-            client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
+            price_client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
+            price_client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
-            ('start', 'Меню'), ('login', 'Войти по номеру'), ('loginqr', 'Войти по QR'),
+            ('start', 'Меню'), ('login', 'Ответы: вход по номеру'), ('loginqr', 'Ответы: вход по QR'),
+            ('pricelogin', 'Прайс: вход по номеру'), ('priceloginqr', 'Прайс: вход по QR'),
             ('price', 'Запросить прайс у поставщика'), ('uploadprice', 'Загрузить прайс вручную'),
             ('timer', 'Автообновление прайса'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
@@ -1277,9 +1412,10 @@ async def run(config: Config):
             ('why', 'Почему нет ответа в группе'),
             ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки')]])
         store.prune()
-        await app.notify('Бот запущен. Проверяю сохранённый вход. Статус: /status. Войти при необходимости: /login.')
+        await app.notify('Бот запущен. Проверяю входы для прайса и ответов. Статус: /status.\n'
+                         'Ответы с нового аккаунта: /loginqr. Прайс со старого аккаунта сохраняется; при необходимости: /priceloginqr.')
         tasks = [asyncio.create_task(app.dp.start_polling(bot, close_bot_session=False)),
-                 asyncio.create_task(app.account_loop())]
+                 asyncio.create_task(app.account_loop()), asyncio.create_task(app.price_account_loop())]
         if app.price_sync:
             tasks.append(asyncio.create_task(app.price_loop()))
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -1299,6 +1435,8 @@ async def run(config: Config):
             await asyncio.gather(*tasks, return_exceptions=True)
         if client is not None:
             await client.disconnect()
+        if price_client is not None:
+            await price_client.disconnect()
         if bot is not None:
             await bot.session.close()
         store.close()
