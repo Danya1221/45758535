@@ -29,7 +29,10 @@ def quoted_offers(text: str, products):
     if not isinstance(text, str) or not text.strip() or len(text) > 4000:
         return []
     selected = folded(text)
-    return [p for p in products if selected in folded(build_reply([p], intro=''))]
+    # Messages sent before this display change can still be quoted by buyers.
+    return [p for p in products if any(
+        selected in folded(build_reply([p], intro='', include_codes=legacy))
+        for legacy in (False, True))]
 
 
 class ConversationReplies:

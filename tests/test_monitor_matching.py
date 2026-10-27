@@ -76,7 +76,8 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((recipient, source_message_id), (55, 28))
         self.assertEqual(self.store.delivery(-123, 28)['status'], 'sent')
         self.assertIsNone(self.store.delivery(55, 28))
-        self.assertIn('Galaxy S25 12/256 Navy SM-S931B', reply)
+        self.assertIn('Galaxy S25 12/256 Navy', reply)
+        self.assertNotIn('SM-S931B', reply)
         self.assertIn('50 800 ₽', reply)
         self.assertEqual(reply.count('• '), 1)
         for incorrect in ('Ultra', 'Edge', ' FE ', 'Xiaomi', 'iPhone'):
@@ -108,7 +109,8 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
         result = await self.engine.process(self.message('сасунг с25 256 темно-синий'))
         self.assertEqual(result, 'sent')
         reply = self.sent[0][2]
-        self.assertIn('Galaxy S25 12/256 Navy SM-S931B', reply)
+        self.assertIn('Galaxy S25 12/256 Navy', reply)
+        self.assertNotIn('SM-S931B', reply)
         self.assertIn('50 800 ₽', reply)
         self.assertEqual(reply.count('• '), 1)
 

@@ -131,7 +131,9 @@ def resolve_hold(text: str, products: Sequence[Product]) -> Product | None:
         return quoted[0] if len(products) == len(quoted) == 1 and _hold_requested(normalized) else None
     # A copied offer includes its region, price and currency. Compare the
     # complete rendered row before parsing those numbers as model attributes.
-    copied = [p for p in quoted if clean == strip_hold_request(build_reply([p], intro=''))]
+    copied = [p for p in quoted if any(
+        clean == strip_hold_request(build_reply([p], intro='', include_codes=legacy))
+        for legacy in (False, True))]
     if copied:
         return copied[0] if len(copied) == 1 else None
     request = parse_spec(clean)

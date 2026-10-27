@@ -144,7 +144,8 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         text = '• Galaxy S26 12/256 Black SM-S942B/DS\n🇿🇦 — 57 300 ₽'
         await self.client._dispatch_update(self.update('отложи', number=201, reply_to=900, quote_text=text))
         self.assertEqual(self.client.send_message.await_args.args[1], 'Ок')
-        self.assertIn('Black SM-S942B/DS', self.notices()[-1].text)
+        self.assertIn('12/256 Black', self.notices()[-1].text)
+        self.assertNotIn('SM-S942B/DS', self.notices()[-1].text)
         self.assertIn('57 300 ₽', self.notices()[-1].text)
         self.assertNotIn('Sky Blue', self.notices()[-1].text)
 

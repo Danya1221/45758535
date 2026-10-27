@@ -639,7 +639,21 @@ def money(price: Decimal) -> str:
     return f"{price:,.2f}".replace(",", " ").removesuffix(".00").replace(".", ",") + " ₽"
 
 
-def build_reply(products: list[Product], intro: str | None = None, contact: str = "") -> str:
+_DISPLAY_PRODUCT_CODES = re.compile(
+    r'(?<![\w])(?:SM-[A-Z0-9]+(?:/[A-Z0-9]+)?|RW\d{4}[A-Z]?|'
+    r'00W\d{4}[A-Z]?|VK[JP]-[A-Z0-9]+|CPH\d{4}|A\d{4}[A-Z]?|'
+    r'NP\d{3}[A-Z0-9]+(?:\s*-\s*[A-Z]{2}\d[A-Z]{2})?|'
+    r'\d{3}-\d{5}-\d{2})(?![\w])', re.IGNORECASE)
+
+
+def display_product_name(name: str) -> str:
+    """Hide recognizable manufacturer codes only when rendering an offer."""
+    cleaned = _DISPLAY_PRODUCT_CODES.sub('', name)
+    return re.sub(r'\s+', ' ', cleaned).strip() or name
+
+
+def build_reply(products: list[Product], intro: str | None = None, contact: str = "", *,
+                include_codes: bool = False) -> str:
     unknown_stock = any(p.stock is None for p in products)
     if intro == 'По актуальному прайсу:' or (unknown_stock and intro == 'Есть в наличии:'):
         intro = ''
@@ -650,7 +664,8 @@ def build_reply(products: list[Product], intro: str | None = None, contact: str 
         price = f" — {money(product.price)}" if product.price is not None else ""
         region = f' {product.country or product.price_country}' if product.country or product.price_country else ''
         quantity = f' (от {product.min_qty} шт)' if product.min_qty > 1 else ''
-        lines.append(f"• {product.name}{region}{price}{quantity}")
+        name = product.name if include_codes else display_product_name(product.name)
+        lines.append(f"• {name}{region}{price}{quantity}")
     if contact:
         lines.extend(("", contact))
     return "\n".join(lines)
