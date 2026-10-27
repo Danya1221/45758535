@@ -1557,39 +1557,96 @@
     },
     {
       "id": "only-brand",
-      "category": "negative-implicit",
+      "category": "brand-range",
       "query": "Куплю Apple",
-      "expected": []
+      "expected": [
+        "IP16-256-BK-SIM",
+        "IP17-256-BK-COMBO",
+        "IP17-256-BK-DUAL",
+        "IP17-256-BK-ESIM",
+        "IP17-256-BK-SIM",
+        "IP17-256-WH-SIM",
+        "IP17-512-BK-SIM",
+        "IP17-NOPRICE",
+        "IP17-REG-CN",
+        "IP17-REG-JP",
+        "IP17-REG-UNKNOWN",
+        "IP17-REG-US",
+        "IP17AIR-256-BK-SIM",
+        "IP17P-256-BK-SIM",
+        "IP17PLUS-256-BK-SIM",
+        "IP17PM-256-BK-SIM",
+        "IP17PM-256-BL-SIM",
+        "IP17PM-512-BK-SIM",
+        "IP18-256-BK-SIM",
+        "IP18PM-1TB-GL-ESIM",
+        "IPAD10-128-WIFI",
+        "IPAD11-128-CELL",
+        "IPAD11-128-WIFI",
+        "IPAD11-256-WIFI"
+      ]
     },
     {
       "id": "only-sony",
-      "category": "negative-implicit",
+      "category": "brand-range",
       "query": "Куплю Sony",
-      "expected": []
+      "expected": [
+        "PS5-PRO",
+        "PS5-SLIM-DIGITAL",
+        "PS5-SLIM-DISC",
+        "WFXM6-BK",
+        "WHXM5-BK",
+        "WHXM6-BK"
+      ]
     },
     {
       "id": "only-nintendo",
-      "category": "negative-implicit",
+      "category": "brand-range",
       "query": "Нужен Nintendo",
-      "expected": []
+      "expected": [
+        "SWITCH1-32-BK",
+        "SWITCH2-256-BK",
+        "SWITCHLITE-32-GR",
+        "SWITCHOLED-64-WH"
+      ]
     },
     {
       "id": "only-garmin",
-      "category": "negative-implicit",
+      "category": "brand-range",
       "query": "Куплю Garmin",
-      "expected": []
+      "expected": [
+        "GAR-F7-47",
+        "GAR-F8-47",
+        "GAR-F8-51",
+        "GAR-FR970"
+      ]
     },
     {
       "id": "only-honor",
-      "category": "negative-implicit",
+      "category": "brand-range",
       "query": "Нужен Honor",
-      "expected": []
+      "expected": [
+        "HON500L-8-256-GD",
+        "HON600-12-256-WH",
+        "HON600-8-256-BK",
+        "HON600L-8-256-GD",
+        "HON600P-12-256-BK",
+        "HON600P-12-512-BK",
+        "HONM8P-16-1TB-GD",
+        "HONM8P-32-256-BK"
+      ]
     },
     {
       "id": "only-oneplus",
-      "category": "negative-implicit",
+      "category": "brand-range",
       "query": "OnePlus",
-      "expected": []
+      "expected": [
+        "OP14R-12-256-MI",
+        "OP15-12-256-BK",
+        "OP15-16-512-VI",
+        "OP15R-12-256-MI",
+        "OP15R-12-512-MI"
+      ]
     },
     {
       "id": "wrong-iphone-generation",

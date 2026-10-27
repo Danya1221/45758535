@@ -28,13 +28,13 @@ class StrictMatchingTests(unittest.TestCase):
         self.assertEqual(self.names('Нужен iPad 11 Cellular', *items), list(items[1:3]))
         self.assertEqual(self.names('Нужен iPad 11 WiFi', *items), [items[0]])
 
-    def test_brand_only_is_not_model(self):
-        self.assertEqual(self.names('Куплю Sony', 'Sony WH1000XM6', 'Sony WH1000XM5'), [])
+    def test_brand_only_lists_products_but_a_model_stays_specific(self):
+        self.assertEqual(self.names('Куплю Sony', 'Sony WH1000XM6', 'Sony WH1000XM5'), ['Sony WH1000XM6', 'Sony WH1000XM5'])
         self.assertEqual(self.names('Куплю Sony WH1000XM6', 'Sony WH1000XM6', 'Sony WH1000XM5'), ['Sony WH1000XM6'])
 
     def test_letter_only_model_requires_full_catalog_model(self):
         self.assertEqual(self.names('Куплю Nintendo Switch Lite', 'Nintendo Switch Lite Gray'), ['Nintendo Switch Lite Gray'])
-        self.assertEqual(self.names('Куплю Nintendo', 'Nintendo Switch Lite Gray'), [])
+        self.assertEqual(self.names('Куплю Nintendo', 'Nintendo Switch Lite Gray'), ['Nintendo Switch Lite Gray'])
         self.assertEqual(self.names('Куплю Marshall Emberton', 'Marshall Emberton III'), [])
 
     def test_conflicting_storage_is_not_implicit_or(self):

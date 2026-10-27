@@ -124,6 +124,8 @@ def _fuzzy_brand(token: str) -> str | None:
 def normalize_with_notes(value: str) -> tuple[str, tuple[str, ...]]:
     text = _base(value)
     notes: list[str] = []
+    # Sony WH/WF prefixes are model codes, even if written with a space.
+    text = re.sub(r'\b(wh|wf)\s+(1000xm\d+)\b', r'\1-\2', text)
     protected: dict[str, str] = {}
     marker = 'zzlexprotected'
     while marker in text:

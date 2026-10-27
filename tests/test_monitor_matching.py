@@ -99,11 +99,15 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await self.engine.process(self.message(text)), 'no_match')
         self.assertEqual(self.sent, [])
 
-    async def test_brand_only_requests_never_quote_the_whole_brand(self):
-        for text in ('Samsung', 'Iphone'):
-            with self.subTest(text=text):
-                self.assertEqual(await self.engine.process(self.message(text)), 'no_match')
-        self.assertEqual(self.sent, [])
+    async def test_brand_only_returns_the_matching_products_in_full(self):
+        self.assertEqual(await self.engine.process(self.message('Samsung', message_id=40)), 'sent')
+        self.assertIn('Galaxy S25', self.sent[-1][2])
+        self.assertNotIn('iPhone', self.sent[-1][2])
+        self.assertNotIn('Xiaomi', self.sent[-1][2])
+        self.assertEqual(await self.engine.process(self.message('Iphone', message_id=41)), 'sent')
+        self.assertIn('iPhone 16 Pro Max 512 Black', self.sent[-1][2])
+        self.assertNotIn('Galaxy', self.sent[-1][2])
+        self.assertNotIn('Xiaomi', self.sent[-1][2])
 
     async def test_cyrillic_samsung_typo_quotes_same_base_navy_position(self):
         result = await self.engine.process(self.message('сасунг с25 256 темно-синий'))

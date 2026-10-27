@@ -150,9 +150,13 @@ def parse_spec(text: str) -> Spec:
     category = next((kind for kind, pattern in (
         ('case', r'\b(?:чехол\w*|case|cover)\b'),
         ('protector', r'\b(?:стекло|пленка|protector)\b'),
-        ('charger', r'\b(?:заряд\w*|charger|кабель|cable)\b'),
+        ('charger', r'\b(?:заряд\w*|charger|кабель|cable|adapter|адаптер\w*|power\s*bank|powerbank)\b'),
+        ('accessory', r'\b(?:lens\s+kit|charging\s+pouch)\b'),
         ('parts', r'\b(?:дисплей|экран|аккумулятор|запчаст\w*|replacement)\b'),
     ) if re.search(pattern, category_text)), 'device')
+    if (category == 'device' and re.search(r'\b(?:battery|batteries)\b', category_text)
+            and not re.search(r'\b(?:bundle|combo)\b', category_text)):
+        category = 'parts'
     brand, issues = identity(n, category)
     core = entity_text(n)
     core_tokens = set(words(core))
@@ -171,6 +175,9 @@ def parse_spec(text: str) -> Spec:
                            key=lambda pair: -len(pair[0]))
     for alias, color in color_aliases:
         pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
+        if alias == 'wh':
+            # WH is also the Sony headphone model prefix, not "white".
+            pattern += r'(?!-\d)'
         if re.search(pattern, n):
             colors.add(color)
             for role, prefix in (('frame', r'f|frame|оправа'), ('lens', r'l|lens|линзы')):
@@ -204,7 +211,8 @@ def parse_spec(text: str) -> Spec:
         sim = "sim"
     elif re.search(r"(?<!\w)esim(?!\w)", n):
         sim = "esim"
-    variant = tokens & VARIANTS
+    # Color names such as Ultra Violet must not create a model version.
+    variant = set(words(n)) & VARIANTS
     family = "generic"
     model: set[str] = set()
     iphone = re.search(r"\biphone\s+(\d{1,2})\b", core) if category == 'device' else None
@@ -233,9 +241,10 @@ def parse_spec(text: str) -> Spec:
     device_families = core_tokens.intersection(COMPATIBILITY_FAMILIES - {'galaxy'})
     if category == 'device' and len(device_families) > 1:
         issues.append('несколько семейств устройств в одной строке')
-    cleaned = re.sub(r"\b\d{1,4}(?:gb|tb)\b", " ", n)
+    cleaned = re.sub(r'(?<!\w)\d{3}-\d{5}-\d{2}(?!\w)', ' ', n)
+    cleaned = re.sub(r"\b\d{1,4}(?:gb|tb)\b", " ", cleaned)
     cleaned = re.sub(r"\b\d{1,2}\s*/\s*\d{1,4}\b", " ", cleaned)
-    cleaned = re.sub(r"\b(?:размер|size)\s+[xsml]{1,3}\b", " ", cleaned)
+    cleaned = re.sub(r"\b(?:размер|size)\s+(?:[xsml]{1,3}|\d{1,2})\b", " ", cleaned)
     cleaned = re.sub(r"\b(?:до|бюджет)\s*[:=]?\s*[\d ]+(?:₽|руб|rub)?", " ", cleaned)
     traits = {
         t for t in words(cleaned)
@@ -256,7 +265,7 @@ def parse_spec(text: str) -> Spec:
         traits = set()
     else:
         traits -= model | {family}
-    size_match = re.search(r"\b(?:размер|size)\s*([xsml]{1,3})\b", n)
+    size_match = re.search(r"\b(?:размер|size)\s*([xsml]{1,3}|\d{1,2})\b", n)
     if not size_match and "rayban" in tokens:
         size_match = re.search(r"\b([sml]|xl|xxl)\s*$", n)
     condition = next((x for x in ("refurbished", "used", "new") if x in tokens), None)
@@ -476,6 +485,12 @@ def model_reason(request: Spec, item: Spec) -> str | None:
         # Extra generation/model numbers are never implicit alternatives.
         requested_numbers = {t for t in request.model if re.fullmatch(r'\d+|[ivx]+', t)}
         item_numbers = {t for t in item.model if re.fullmatch(r'\d+|[ivx]+', t)}
+        # In camera listings, a trailing 360 describes the recording mode;
+        # it is not another generation when a specific model was requested.
+        if (item.brand in {'insta360', 'gopro'} and request.model
+                and '360' not in request.model
+                and any(t != '360' and re.search(r'\d', t) for t in request.model)):
+            item_numbers.discard('360')
         if requested_numbers != item_numbers:
             return 'поколение / номер модели'
     elif request.model != item.model:
@@ -527,7 +542,8 @@ def product_identifiers(product: Product) -> dict[str, set[str]]:
     identifiers = {code_key(product.sku): set(re.findall(r'[a-zа-яё0-9]+', product.sku.casefold()))} if product.sku else {}
     raw_name = unicodedata.normalize('NFKC', product.name).casefold()
     for token in re.findall(r'[a-z0-9]+(?:[-/][a-z0-9]+)*', raw_name):
-        if re.match(r'[a-z]{2,}', token) and re.search(r'\d{3,}', token):
+        if ((re.match(r'[a-z]{2,}', token) and re.search(r'\d{3,}', token))
+                or re.fullmatch(r'\d{3}-\d{5}-\d{2}', token)):
             identifiers[code_key(token)] = set(re.findall(r'[a-z0-9]+', token))
     return identifiers
 
@@ -558,6 +574,40 @@ def rayban_broad_reason(request: Spec, item: Spec, clean: str, name: str) -> str
     return None
 
 
+def broad_brand_reference(clean: str) -> str | None:
+    """A single known brand/family can request its available assortment."""
+    tokens = words(clean)
+    return tokens[0] if len(tokens) == 1 and tokens[0] in BRAND_OWNERS else None
+
+
+def broad_brand_reason(reference: str, request: Spec, item: Spec, name: str) -> str | None:
+    if reference == 'meta':
+        return None if 'meta' in words(name) else 'бренд'
+    if request.brand != item.brand:
+        return 'бренд'
+    # Manufacturer names and product families are different: an iPhone query
+    # must never include Apple chargers, iPads or unrelated brands.
+    if reference == 'iphone':
+        return None if item.family == 'iphone' else 'линейка устройств'
+    if reference == 'pixel':
+        return None if re.search(r'\bpixel\s+\d+[a-z]?\b', normalize(name)) else 'линейка устройств'
+    if reference != BRAND_OWNERS[reference] and reference not in words(name):
+        return 'линейка устройств'
+    return None
+
+
+def sony_xm_reason(request: Spec, item: Spec, name: str) -> str | None:
+    """A short XM6 query can list both WH and WF, with full names and prices."""
+    token = next(iter(request.model))
+    if item.brand != 'sony' or item.family != 'generic':
+        return 'бренд'
+    if not re.search(r'\b(?:wh|wf)[- ]?(?:1000)?' + re.escape(token) + r'\b', normalize(name)):
+        return 'модель'
+    if request.variants and request.variants != item.variants:
+        return 'версия модели'
+    return None
+
+
 def inspect_request(text: str, products: list[Product], allow_bare: bool = True) -> MatchReport:
     classification = intent(text, allow_bare)
     report = MatchReport(classification, [], [])
@@ -579,15 +629,21 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
             report.details.append('Нормализация: ' + '; '.join(normalization_notes))
         request = parse_spec(clean)
         rayban_range = not requested_skus and rayban_broad_request(request)
+        brand_reference = broad_brand_reference(clean) if not requested_skus and not rayban_range else None
+        sony_xm = (not requested_skus and request.brand == 'sony' and request.family == 'generic'
+                   and len(request.model) == 1 and bool(re.fullmatch(r'xm\d+', next(iter(request.model)))))
         if requested_skus:
             report.details.append('Точный артикул: ' + ', '.join(sorted(requested_skus)))
         report.details.append(describe_spec(request))
         issues = list(request.issues)
         # A brand, category or series alone cannot identify a concrete product.
         named_model = (len(request.model) >= 2 or (request.brand is not None and bool(request.model))) and any(
-            request.model == parse_spec(p.name).model and request.variants == parse_spec(p.name).variants
+            request.model.issubset(parse_spec(p.name).model)
+            and (request.brand is None or request.brand == parse_spec(p.name).brand)
+            and request.category == parse_spec(p.name).category
+            and request.variants == parse_spec(p.name).variants
             for p in products)
-        if not requested_skus and not rayban_range and (not request.model or (request.family == 'generic' and not named_model and not any(
+        if not requested_skus and not rayban_range and not brand_reference and (not request.model or (request.family == 'generic' and not named_model and not any(
                 re.search(r'\d', t) or re.fullmatch(r'[ivx]+', t) for t in request.model))):
             issues.append('не указана конкретная модель или артикул')
         if request.family == 'iphone' and 'iphone' not in words(clean) and not requested_skus:
@@ -624,6 +680,10 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
                         reason = 'версия модели'
             elif rayban_range:
                 reason = rayban_broad_reason(request, item, clean, product.name)
+            elif brand_reference:
+                reason = broad_brand_reason(brand_reference, request, item, product.name)
+            elif sony_xm:
+                reason = sony_xm_reason(request, item, product.name)
             else:
                 reason = model_reason(request, item)
             # Only explain attribute failures for the requested model.
@@ -631,6 +691,8 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
                 rejected[reason] = rejected.get(reason, 0) + 1
                 continue
             attribute_request = request
+            if brand_reference == 'meta':
+                attribute_request = replace(request, brand=None)
             if (sku_match and request.family == 'generic' and request.category == 'device' and not extra
                     and not re.search(r'\b(?:телефон|смартфон|планшет|ноутбук)\b', clean)):
                 attribute_request = replace(request, category=item.category)

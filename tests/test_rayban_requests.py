@@ -40,6 +40,6 @@ class RayBanRequestsTests(unittest.TestCase):
         self.assertEqual(self.matches('Meta Ray-Ban Wayfarer Gen3'), [])
 
     def test_brand_conflict_unknown_line_and_sales_never_trigger(self):
-        for text in ('Ray-Ban Oakley', 'Ray-Ban Quest', 'продам Meta Ray-Ban', 'Samsung', 'Meta'):
+        for text in ('Ray-Ban Oakley', 'Ray-Ban Quest', 'продам Meta Ray-Ban', 'Samsung'):
             with self.subTest(text=text):
                 self.assertEqual(self.matches(text), [])
