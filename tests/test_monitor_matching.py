@@ -83,6 +83,17 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
         for incorrect in ('Ultra', 'Edge', ' FE ', 'Xiaomi', 'iPhone'):
             self.assertNotIn(incorrect, reply)
 
+    async def test_s25_blue_incoming_finds_icyblue_and_replies_privately(self):
+        result = await self.engine.process(self.message('S25 Blue', message_id=29))
+        self.assertEqual(result, 'sent')
+        self.assertEqual(len(self.sent), 1)
+        recipient, source_message_id, reply = self.sent[0]
+        self.assertEqual((recipient, source_message_id), (55, 29))
+        self.assertIn('Galaxy S25 12/256 Icyblue', reply)
+        self.assertIn('49 800 ₽', reply)
+        for incorrect in ('Navy', 'Ultra', 'Edge', ' FE ', 'Xiaomi', 'iPhone'):
+            self.assertNotIn(incorrect, reply)
+
     async def test_other_screenshot_messages_do_not_block_incoming_navy(self):
         for message_id, text in enumerate(
                 ('S25 256 black', 'Samsung', 'Samsung', 'Iphone'), start=1):

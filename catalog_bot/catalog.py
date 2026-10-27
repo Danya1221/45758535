@@ -454,9 +454,16 @@ def parse_catalog(text: str) -> list[Product]:
 def colors_match(request: Spec, item: Spec) -> bool:
     if not request.colors:
         return True
+    item_colors = set(item.colors)
+    # Color families only broaden a general request, never a request for an
+    # exact shade. The original product name is shown in the reply.
+    for shade, parents in {'icyblue': {'blue'}, 'jetblack': {'black'},
+                           'whitesilver': {'white', 'silver'}}.items():
+        if shade in item_colors:
+            item_colors.update(parents)
     if request.color_options:
-        return bool(request.colors.intersection(item.colors))
-    return request.colors.issubset(item.colors)
+        return bool(request.colors.intersection(item_colors))
+    return request.colors.issubset(item_colors)
 
 
 def attribute_reason(request: Spec, item: Spec) -> str | None:
