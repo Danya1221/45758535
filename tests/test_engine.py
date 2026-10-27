@@ -52,6 +52,14 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.engine.process(self.incoming(message_id=3, sender_id=56)), 'sent')
         self.assertEqual([row[0] for row in self.sent], [55, 56])
 
+    async def test_cyrillic_brand_request_is_not_blocked_by_latin_spelling(self):
+        self.store.replace_products(parse_catalog('POCO F9 Pro 12/256 Green|52000|1'))
+        self.assertEqual(await self.engine.process(self.incoming(text='poco')), 'sent')
+        self.assertEqual(await self.engine.process(self.incoming(text='поко', message_id=2)), 'sent')
+        self.assertEqual(await self.engine.process(self.incoming(text='ПОКО', message_id=3)), 'duplicate')
+        self.assertEqual(len(self.sent), 2)
+        self.assertTrue(all('POCO F9 Pro' in row[2] for row in self.sent))
+
     async def test_unselected_old_outgoing_bot_private_and_forwarded_are_ignored(self):
         for changes in [dict(chat_id=999), dict(timestamp=100), dict(outgoing=True), dict(is_bot=True), dict(is_group=False), dict(forwarded=True)]:
             with self.subTest(changes=changes):

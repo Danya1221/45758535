@@ -186,6 +186,28 @@ def normalize_with_notes(value: str) -> tuple[str, tuple[str, ...]]:
             line = re.sub(r'(?<![\w-])[a-zа-я]{5,}(?![\w-])', correct, line)
         lines.append(line)
     text = '\n'.join(lines)
+    # Transliterate model letters only for the manufacturer that uses them.
+    # A POCO C95 and a Samsung S95 are distinct products. SKU punctuation is
+    # excluded so opaque supplier identifiers never get rewritten.
+    converted = []
+    for line in text.split('\n'):
+        if re.search(r'\bpoco\b', line):
+            line = re.sub(r'(?<![\w/-])(икс|ф|х|м|с)\s*(\d{1,3})(?![\w/-])',
+                          lambda m: record(m[0], {'икс': 'x', 'ф': 'f', 'х': 'x', 'м': 'm', 'с': 'c'}[m[1]] + m[2]), line)
+        if re.search(r'\b(?:insta360|vivo)\b', line):
+            line = re.sub(r'(?<![\w/-])(?:икс|х)\s*(\d{1,3})(?![\w/-])',
+                          lambda m: record(m[0], 'x' + m[1]), line)
+        if re.search(r'\bsony\b', line):
+            line = re.sub(r'(?<![\w/-])(?:хм|икс\s*эм)\s*(\d{1,2})(?![\w/-])',
+                          lambda m: record(m[0], 'xm' + m[1]), line)
+        if re.search(r'\bxiaomi\b', line):
+            line = re.sub(r'(?<![\w/-])(1\d|2\d)\s*т(?![\w/-])',
+                          lambda m: record(m[0], m[1] + 't'), line)
+        if re.search(r'\bpixel\b', line):
+            line = re.sub(r'(?<![\w/-])(\d{1,2})\s*а(?![\w/-])',
+                          lambda m: record(m[0], m[1] + 'a'), line)
+        converted.append(line)
+    text = '\n'.join(converted)
     if re.search(r'\b(?:samsung|galaxy)\b', text):
         text = re.sub(r'\b([са])(?=\d{2}[a-z]?\b)',
                       lambda m: record(m[0], {'с': 's', 'а': 'a'}[m[1]]), text)

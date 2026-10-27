@@ -4,10 +4,11 @@ import hashlib
 import json
 import sqlite3
 import time
+import unicodedata
 from decimal import Decimal
 from pathlib import Path
 
-from .catalog import Product, normalize, product_key
+from .catalog import Product, product_key
 from .prices import PriceFeedError
 from .pricing import MarkupPolicy
 
@@ -217,7 +218,10 @@ class Store:
     def reserve(self, chat_id: int, message_id: int, sender_id: int, text: str,
                 dedup_seconds: int, now: float | None = None) -> bool:
         now = time.time() if now is None else now
-        key = hashlib.sha256(normalize(text).encode()).hexdigest()
+        # Keep different spellings separate: "poco" and "поко" should both
+        # be answerable. Identical cross-posts still share a deduplication key.
+        request_text = ' '.join(unicodedata.normalize('NFKC', text).casefold().split())
+        key = hashlib.sha256(request_text.encode()).hexdigest()
         self.db.execute("BEGIN IMMEDIATE")
         try:
             if self.db.execute("SELECT 1 FROM deliveries WHERE chat_id=? AND message_id=?", (chat_id, message_id)).fetchone():
