@@ -95,6 +95,48 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('12/512 Black', self.notify.await_args.args[0])
         self.assertIn('50 000 ₽', self.notify.await_args.args[0])
 
+    async def test_selected_quote_row_books_the_exact_model_region_and_price(self):
+        black = Product('Galaxy S26 12/256 Black SM-S942B/DS', Decimal('57300'), None, country='🇿🇦')
+        other = replace(black, country='🇭🇰', price=Decimal('58000'))
+        self.store.save_quote(77, 88, -123, 29, 's26', [black, other], now=1001, sent_message_ids=[910])
+        quoted = '• Galaxy S26 12/256 Black SM-S942B/DS\n🇿🇦 — 57 300 ₽'
+        result = await self.flow.process(self.message('отложи'), self.sender, 910, quoted_text=quoted)
+        self.assertEqual(result, 'hold')
+        self.send.assert_awaited_once_with(88, 200, 'Ок')
+        notice = self.notify.await_args.args[0]
+        self.assertIn('🇿🇦', notice)
+        self.assertIn('57 300 ₽', notice)
+        self.assertNotIn('58 000', notice)
+
+    async def test_ambiguous_or_unquoted_text_never_selects_a_random_offer(self):
+        black = Product('Galaxy S25 12/256 Black', Decimal('49000'), None)
+        self.store.save_quote(77, 88, -123, 29, 's25', self.products + [black], now=1001, sent_message_ids=[910])
+        for number, quoted in enumerate(('Galaxy S25', 'iPhone 17', '• Galaxy S25 12/256 Black — 1 ₽'), 201):
+            result = await self.flow.process(self.message(message_id=number), self.sender, 910, quoted_text=quoted)
+            self.assertEqual(result, 'clarify')
+            self.assertIn('Какую именно позицию', self.send.await_args.args[2])
+        self.notify.assert_not_awaited()
+
+    async def test_explicit_selection_in_message_must_agree_with_selected_quote(self):
+        black = Product('Galaxy S25 12/256 Black', Decimal('49000'), None)
+        self.store.save_quote(77, 88, -123, 29, 's25', self.products + [black], now=1001, sent_message_ids=[910])
+        result = await self.flow.process(self.message('отложите navy'), self.sender, 910, quoted_text='Black')
+        self.assertEqual(result, 'clarify')
+        self.notify.assert_not_awaited()
+
+    async def test_text_quote_requires_a_tracked_reply_message(self):
+        row = build_reply(self.products, intro='')
+        self.assertEqual(await self.flow.process(self.message(), self.sender, quoted_text=row), 'untracked')
+        self.assertEqual(await self.flow.process(self.message(), self.sender, 999, quoted_text=row), 'untracked')
+        self.send.assert_not_awaited()
+
+    async def test_discount_in_reply_body_keeps_priority_over_quoted_product(self):
+        result = await self.flow.process(self.message('-200 и отложите'), self.sender, 900,
+                                         quoted_text=build_reply(self.products, intro=''))
+        self.assertEqual(result, 'discount')
+        self.send.assert_awaited_once_with(88, 200, 'Нет')
+        self.notify.assert_not_awaited()
+
     async def test_other_buyer_account_and_expired_quote_cannot_trigger_replies(self):
         other = SimpleNamespace(id=89, username='someone_else')
         self.assertEqual(await self.flow.process(self.message(sender_id=89, chat_id=89), other), 'untracked')

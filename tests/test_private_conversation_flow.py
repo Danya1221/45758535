@@ -58,13 +58,16 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.store.close()
         self.temp.cleanup()
 
-    def update(self, text, *, group=False, number=200, sender=88, username='buyer_test', reply_to=None):
+    def update(self, text, *, group=False, number=200, sender=88, username='buyer_test', reply_to=None,
+               quote_text=None, reply_peer=None):
         message = types.Message(id=number,
                                 peer_id=types.PeerChat(123) if group else types.PeerUser(sender),
                                 from_id=types.PeerUser(sender),
                                 date=datetime.fromtimestamp(int(time.time()), timezone.utc),
                                 message=text, out=False,
-                                reply_to=types.MessageReplyHeader(reply_to_msg_id=reply_to) if reply_to else None)
+                                reply_to=types.MessageReplyHeader(reply_to_msg_id=reply_to, quote_text=quote_text,
+                                                                   quote=quote_text is not None,
+                                                                   reply_to_peer_id=reply_peer) if reply_to else None)
         update = types.UpdateNewMessage(message=message, pts=20, pts_count=1)
         update._entities = {sender: types.User(id=sender, first_name='Илья', access_hash=800, username=username)}
         return update
@@ -132,3 +135,30 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.client._dispatch_update(hold)
         self.assertEqual(self.client.send_message.await_count, count)
         self.assertEqual(len(self.notices()), notices)
+
+    async def test_screenshot_selected_text_quote_is_passed_from_telegram_to_hold_selection(self):
+        black = Product('Galaxy S26 12/256 Black SM-S942B/DS', Decimal('57300'), None, country='🇿🇦')
+        blue = Product('Galaxy S26 12/256 Sky Blue SM-S942B/DS', Decimal('58000'), None, country='🇿🇦')
+        self.store.replace_products([black, blue])
+        await self.client._dispatch_update(self.update('s26', group=True, number=28))
+        text = '• Galaxy S26 12/256 Black SM-S942B/DS\n🇿🇦 — 57 300 ₽'
+        await self.client._dispatch_update(self.update('отложи', number=201, reply_to=900, quote_text=text))
+        self.assertEqual(self.client.send_message.await_args.args[1], 'Ок')
+        self.assertIn('Black SM-S942B/DS', self.notices()[-1].text)
+        self.assertIn('57 300 ₽', self.notices()[-1].text)
+        self.assertNotIn('Sky Blue', self.notices()[-1].text)
+
+    async def test_reply_with_a_partial_unique_quote_selects_that_offer(self):
+        black = Product('Galaxy S25 12/512 Black', Decimal('50000'), None)
+        self.store.replace_products(self.products + [black])
+        await self.client._dispatch_update(self.update('s25', group=True, number=28))
+        await self.client._dispatch_update(self.update('отложите', number=201, reply_to=900, quote_text='12/512 Black'))
+        self.assertEqual(self.client.send_message.await_args.args[1], 'Ок')
+        self.assertIn('12/512 Black', self.notices()[-1].text)
+
+    async def test_quote_referencing_a_different_dialog_is_not_used(self):
+        await self.client._dispatch_update(self.update('s25 navy', group=True, number=28))
+        self.client.send_message.reset_mock()
+        await self.client._dispatch_update(self.update('отложи', number=201, reply_to=900,
+                                                      quote_text='Galaxy S25', reply_peer=types.PeerUser(99)))
+        self.client.send_message.assert_not_awaited()

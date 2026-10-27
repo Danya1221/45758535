@@ -5,6 +5,7 @@ import asyncio
 import html
 import re
 import time
+import unicodedata
 
 from .catalog import build_reply
 from .engine import Incoming, SendFailure
@@ -21,12 +22,23 @@ def user_tag(user) -> str:
     return f'<a href="tg://user?id={user_id}">{name}</a>' if isinstance(user_id, int) and user_id > 0 else name
 
 
+def quoted_offers(text: str, products):
+    """A Telegram text quote selects a substring of a previously sent row."""
+    def folded(value):
+        return ' '.join(unicodedata.normalize('NFKC', value).casefold().split())
+    if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+        return []
+    selected = folded(text)
+    return [p for p in products if selected in folded(build_reply([p], intro=''))]
+
+
 class ConversationReplies:
     def __init__(self, store, send, notify, lock, *, max_per_minute=10, max_age=120, clock=time.time):
         self.store, self.send, self.notify, self.lock = store, send, notify, lock
         self.max_per_minute, self.max_age, self.clock = max_per_minute, max_age, clock
 
-    async def process(self, message: Incoming, sender, reply_to_id: int | None = None) -> str:
+    async def process(self, message: Incoming, sender, reply_to_id: int | None = None,
+                      *, quoted_text: str | None = None) -> str:
         if (message.is_group or message.outgoing or message.is_bot or message.forwarded
                 or message.sender_id <= 0 or message.chat_id != message.sender_id
                 or getattr(sender, 'id', None) != message.sender_id
@@ -43,6 +55,8 @@ class ConversationReplies:
                 return 'paused'
             if message.timestamp < self.store.get('monitor_enabled_at', 0):
                 return 'before_enable'
+            if quoted_text is not None and reply_to_id is None:
+                return 'untracked'
             if reply_to_id is not None:
                 quote = self.store.quote_for_reply(account_id, message.sender_id, reply_to_id, now=now)
             else:
@@ -54,7 +68,9 @@ class ConversationReplies:
             waiting = last and last['kind'] == 'clarify' and last['status'] == 'sent'
             selected = None
             if kind == 'hold' or (kind is None and waiting):
-                selected = resolve_hold(message.text, quote['products'])
+                candidates = (quoted_offers(quoted_text, quote['products'])
+                              if quoted_text is not None else quote['products'])
+                selected = resolve_hold(message.text, candidates)
                 if kind is None and selected is None:
                     return 'ignored'
                 kind = 'hold' if selected else 'clarify'

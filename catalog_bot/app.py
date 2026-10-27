@@ -40,7 +40,7 @@ from .message_chunks import split_messages
 from .conversations import ConversationReplies, user_tag
 
 log = logging.getLogger(__name__)
-RELEASE = '2026-10-27-reservations'
+RELEASE = '2026-10-27-quoted-reservations'
 
 
 @dataclass(frozen=True)
@@ -537,7 +537,12 @@ class Application:
                 return
             incoming = Incoming(event.chat_id, event.id, sender.id, event.raw_text or '', event.date.timestamp(),
                                 is_group=False, forwarded=bool(event.message.fwd_from))
-            result = await self.conversations.process(incoming, sender, event.message.reply_to_msg_id)
+            reply_header = event.message.reply_to
+            reply_peer = getattr(reply_header, 'reply_to_peer_id', None)
+            if reply_peer is not None and (not isinstance(reply_peer, types.PeerUser) or reply_peer.user_id != sender.id):
+                return
+            result = await self.conversations.process(incoming, sender, event.message.reply_to_msg_id,
+                                                       quoted_text=getattr(reply_header, 'quote_text', None))
             if result in {'failed', 'uncertain', 'notice_failed'}:
                 await self.notify(f'Не удалось завершить ответ в личке: {user_tag(sender)}.\n'
                                   f'Результат: {result}. Ответы '
