@@ -20,7 +20,9 @@ FILLER = frozenset(
     "gb гб tb тб ram озу sim esim dual nano нано и или or gen поколение "
     "wi fi wifi cellular a brand new бюджет до за руб р rub в наличии".split()
 )
-BUY = re.compile(r"\b(?:куплю|купим|ищу|ищем|нужен|нужна|нужно|нужны|интересует|возьму|предложите|предлагайте|wtb)\b|у\s+кого\s+есть|кто\s+продаст")
+BUY = re.compile(r"\b(?:интересует\s+цена|сколько\s+стоит|есть\s+ли(?:\s+в\s+наличии)?|"
+                 r"хочу\s+купить|куплю|купим|ищу|ищем|нужен|нужна|нужно|нужны|интересует|"
+                 r"возьму|предложите|предлагайте|wtb)\b|у\s+кого\s+есть|кто\s+продаст|\bпо\s*чем\b")
 SELL = re.compile(r"\b(?:продам|продаю|продаем|продается|продажа|отдам|wts)\b")
 CHATTER = re.compile(r"\b(?:купил|купила|обзор|сломался|сломал|спасибо|почему|настроить|обсуждаем)\b|у\s+меня")
 MONEY = re.compile(r"\d\s*(?:₽|руб\b|rub\b|р\.)", re.I)
@@ -306,6 +308,11 @@ def intent(text: str, allow_bare: bool) -> str:
     if re.search(r"\b(?:не|кроме|без)\s+(?:black|white|silver|esim|sim|черн\w*|бел\w*|серебр\w*)", n):
         return "uncertain"
     if BUY.search(n):
+        return "buy"
+    # A question about availability is a request; an ordinary stock notice is
+    # still a sales message and must not start an automatic reply.
+    if (re.search(r'\bв\s+наличии\s*\?\s*$', n) and not MONEY.search(n)
+            and not re.search(r'\b(?:цена|стоимость)\s*[:=]?\s*\d', n)):
         return "buy"
     if re.search(r"\b(?:в наличии|прайс|оптом|распродажа)\b", n) or MONEY.search(n):
         return "sell"
@@ -596,6 +603,17 @@ def broad_brand_reason(reference: str, request: Spec, item: Spec, name: str) -> 
     return None
 
 
+def clean_request(text: str) -> str:
+    """Remove only conversational wrappers, explicit quantity and memory prepositions."""
+    text = BUY.sub(' ', text)
+    text = re.sub(r'\b(?:добрый\s+день|доброе\s+утро|добрый\s+вечер|здравствуйте|'
+                  r'привет|ребята|друзья|подскажите|подскажи|скажите|пожалуйста|срочно|мне|нам)\b', ' ', text)
+    text = re.sub(r'\bна\s+(?=\d{2,4}(?:gb|tb)?\b)', ' ', text)
+    text = re.sub(r'(?<![\w/-])\d{1,4}\s*(?:шт(?:ук[аи]?)?\.?|штук(?:а|и)?)(?![\w/-])', ' ', text)
+    text = re.sub(r'\b(?:есть|в\s+наличии)\s*\?\s*$', ' ', text)
+    return text.strip(' :,-')
+
+
 def sony_xm_reason(request: Spec, item: Spec, name: str) -> str | None:
     """A short XM6 query can list both WH and WF, with full names and prices."""
     token = next(iter(request.model))
@@ -624,7 +642,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
         specification_text = IDENTIFIER_TOKEN.sub(
             lambda match: identifier_specification(match[0]) if code_key(match[0]) in requested_skus else match[0], segment)
         normalized, normalization_notes = normalize_with_notes(specification_text)
-        clean = BUY.sub(' ', normalized).strip(' :,-')
+        clean = clean_request(normalized)
         if normalization_notes:
             report.details.append('Нормализация: ' + '; '.join(normalization_notes))
         request = parse_spec(clean)

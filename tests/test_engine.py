@@ -60,6 +60,16 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.sent), 2)
         self.assertTrue(all('POCO F9 Pro' in row[2] for row in self.sent))
 
+    async def test_conversational_russian_request_sends_exact_priced_offer(self):
+        self.store.replace_products(parse_catalog('POCO F9 Pro 12/256 Green|52000|1\n'
+                                                  'POCO F8 Ultra 12/256 Black|53200|1'))
+        request = 'Добрый день, нужен покофон ф9 прошка на 256 гигов, 2шт'
+        self.assertEqual(await self.engine.process(self.incoming(text=request)), 'sent')
+        response = self.sent[-1][2]
+        self.assertIn('POCO F9 Pro 12/256 Green', response)
+        self.assertIn('52 000 ₽', response)
+        self.assertNotIn('POCO F8', response)
+
     async def test_unselected_old_outgoing_bot_private_and_forwarded_are_ignored(self):
         for changes in [dict(chat_id=999), dict(timestamp=100), dict(outgoing=True), dict(is_bot=True), dict(is_group=False), dict(forwarded=True)]:
             with self.subTest(changes=changes):
