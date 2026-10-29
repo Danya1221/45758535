@@ -112,7 +112,7 @@ class PriceHistoryTests(unittest.TestCase):
     def test_supplier_refresh_keeps_replies_free_of_automatic_headings(self):
         self.store.apply_price_snapshot(parse_price_feed(price_text()), 'bot:123')
         self.assertEqual(self.store.get('intro'), '')
-        self.assertTrue(build_reply(self.store.products(), self.store.get('intro')).startswith('• Galaxy S26'))
+        self.assertTrue(build_reply(self.store.products(), self.store.get('intro')).startswith('Galaxy S26'))
         self.store.apply_price_snapshot(parse_price_feed(price_text(price='61 000')), 'bot:123')
         self.assertEqual(self.store.get('intro'), '')
 

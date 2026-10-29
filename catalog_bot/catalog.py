@@ -793,7 +793,7 @@ def build_reply(products: list[Product], intro: str | None = None, contact: str 
         region = f' {product.country or product.price_country}' if product.country or product.price_country else ''
         quantity = f' (от {product.min_qty} шт)' if product.min_qty > 1 else ''
         name = product.name if include_codes else display_product_name(product.name)
-        lines.append(f"• {name}{region}{price}{quantity}")
+        lines.append(f"{name}{region}{price}{quantity}")
     if contact:
         lines.extend(("", contact))
     return "\n".join(lines)

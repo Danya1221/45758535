@@ -128,7 +128,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         await self.feed('/changes')
         self.assertIn('85000 → 86000', self.texts()[-1])
         await self.feed('/test Куплю iPhone 17 256 Black')
-        self.assertIn('• iPhone 17 256GB Black', self.texts()[-1])
+        self.assertIn('iPhone 17 256GB Black', self.texts()[-1])
         self.assertNotIn('По актуальному прайсу:', self.texts()[-1])
         self.assertIn('86 000 ₽', self.texts()[-1])
 

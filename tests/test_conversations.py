@@ -108,6 +108,14 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('57 300 ₽', notice)
         self.assertNotIn('58 000', notice)
 
+    async def test_selected_quote_without_bullet_books_the_exact_offer(self):
+        black = Product('Galaxy S26 12/256 Black', Decimal('57300'), None, country='🇿🇦')
+        self.store.save_quote(77, 88, -123, 29, 's26', [black], now=1001, sent_message_ids=[910])
+        quoted = build_reply([black], intro='')
+        result = await self.flow.process(self.message('отложи'), self.sender, 910, quoted_text=quoted)
+        self.assertEqual(result, 'hold')
+        self.assertIn('57 300 ₽', self.notify.await_args.args[0])
+
     async def test_ambiguous_or_unquoted_text_never_selects_a_random_offer(self):
         black = Product('Galaxy S25 12/256 Black', Decimal('49000'), None)
         self.store.save_quote(77, 88, -123, 29, 's25', self.products + [black], now=1001, sent_message_ids=[910])

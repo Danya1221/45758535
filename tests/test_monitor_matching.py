@@ -79,7 +79,7 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Galaxy S25 12/256 Navy', reply)
         self.assertNotIn('SM-S931B', reply)
         self.assertIn('50 800 ₽', reply)
-        self.assertEqual(reply.count('• '), 1)
+        self.assertNotIn('• ', reply)
         for incorrect in ('Ultra', 'Edge', ' FE ', 'Xiaomi', 'iPhone'):
             self.assertNotIn(incorrect, reply)
 
@@ -127,7 +127,7 @@ class ScreenshotRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Galaxy S25 12/256 Navy', reply)
         self.assertNotIn('SM-S931B', reply)
         self.assertIn('50 800 ₽', reply)
-        self.assertEqual(reply.count('• '), 1)
+        self.assertNotIn('• ', reply)
 
 
 if __name__ == '__main__':

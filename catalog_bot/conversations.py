@@ -28,7 +28,10 @@ def quoted_offers(text: str, products):
         return ' '.join(unicodedata.normalize('NFKC', value).casefold().split())
     if not isinstance(text, str) or not text.strip() or len(text) > 4000:
         return []
-    selected = folded(text)
+    # Older replies began with a bullet; keep their quoted rows selectable.
+    selected = folded(re.sub(r'^\s*•\s*', '', text))
+    if not selected:
+        return []
     # Messages sent before this display change can still be quoted by buyers.
     return [p for p in products if any(
         selected in folded(build_reply([p], intro='', include_codes=legacy))

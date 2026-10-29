@@ -88,11 +88,11 @@ class MatchingTests(unittest.TestCase):
         reply = build_reply(found)
         self.assertIn('85 000 ₽', reply)
         self.assertNotIn('95 000', reply)
-        self.assertEqual(build_reply([Product('Marshall Emberton III Black')]), 'Есть в наличии:\n• Marshall Emberton III Black')
+        self.assertEqual(build_reply([Product('Marshall Emberton III Black')]), 'Есть в наличии:\nMarshall Emberton III Black')
 
     def test_supplier_reply_starts_with_product_and_has_no_automatic_header(self):
         product = Product('Galaxy S25 12/256 Navy', Decimal('49000'), None)
-        expected = '• Galaxy S25 12/256 Navy — 49 000 ₽'
+        expected = 'Galaxy S25 12/256 Navy — 49 000 ₽'
         for intro in (None, '', 'Есть в наличии:', 'По актуальному прайсу:'):
             with self.subTest(intro=intro):
                 self.assertEqual(build_reply([product], intro), expected)
@@ -100,17 +100,17 @@ class MatchingTests(unittest.TestCase):
     def test_custom_intro_and_contact_are_preserved_without_automatic_supplier_text(self):
         product = Product('Galaxy S25 12/256 Navy', Decimal('49000'), None)
         self.assertEqual(build_reply([product], 'Предложение:', '@seller'),
-                         'Предложение:\n• Galaxy S25 12/256 Navy — 49 000 ₽\n\n@seller')
+                         'Предложение:\nGalaxy S25 12/256 Navy — 49 000 ₽\n\n@seller')
 
     def test_reply_contains_all_seven_matching_variants_without_hidden_counter(self):
         variants = ['12/512 Black', '12/512 Gray', '12/512 Whitesilver', '12/512 Silverblue',
                     '12/1TB Black', '12/1TB Gray', '12/1TB Whitesilver']
         products = [Product('Galaxy S25 Ultra ' + variant, Decimal('69800'), None) for variant in variants]
         reply = build_reply(products)
-        self.assertEqual(reply.count('• '), 7)
+        self.assertNotIn('• ', reply)
         self.assertNotIn('Ещё вариантов', reply)
         self.assertEqual([line.split(' — ')[0] for line in reply.splitlines()],
-                         ['• ' + p.name for p in products])
+                         [p.name for p in products])
 
 
 class ImportTests(unittest.TestCase):
