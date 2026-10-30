@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 from catalog_bot.catalog import Product, build_reply
 from catalog_bot.conversations import ConversationReplies, user_tag
-from catalog_bot.engine import Engine, Incoming, SendFailure
+from catalog_bot.engine import Engine, Incoming
 from catalog_bot.storage import Store
 
 
@@ -37,12 +37,14 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         data = dict(chat_id=88, message_id=200, sender_id=88, text=text, timestamp=self.now, is_group=False)
         return Incoming(**(data | changes))
 
-    async def test_discount_answers_no_without_hold_or_owner_notice(self):
-        self.assertEqual(await self.flow.process(self.message('-200'), self.sender), 'discount')
-        self.send.assert_awaited_once_with(88, 200, 'Нет')
+    async def test_discount_requests_are_ignored_without_sending_anything(self):
+        for index, request in enumerate(('-200', 'минус 200', 'скинь 200', 'торг?'), 200):
+            with self.subTest(request=request):
+                self.assertEqual(await self.flow.process(self.message(request, message_id=index), self.sender), 'ignored')
+                self.assertIsNone(self.store.followup(77, 88, index))
+        self.send.assert_not_awaited()
         self.notify.assert_not_awaited()
         self.assertEqual(self.store.holds(77, 88, self.quote_id), [])
-        self.assertEqual(self.store.followup(77, 88, 200)['status'], 'sent')
 
     async def test_hold_silently_notifies_owner_with_tag_and_exact_quoted_price(self):
         self.store.replace_products([replace(self.products[0], price=Decimal('99999'))])
@@ -145,8 +147,8 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_discount_in_reply_body_keeps_priority_over_quoted_product(self):
         result = await self.flow.process(self.message('-200 и отложите'), self.sender, 900,
                                          quoted_text=build_reply(self.products, intro=''))
-        self.assertEqual(result, 'discount')
-        self.send.assert_awaited_once_with(88, 200, 'Нет')
+        self.assertEqual(result, 'ignored')
+        self.send.assert_not_awaited()
         self.notify.assert_not_awaited()
 
     async def test_other_buyer_account_and_expired_quote_cannot_trigger_replies(self):
@@ -170,25 +172,6 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         self.send.assert_not_awaited()
         self.notify.assert_not_awaited()
 
-    async def test_recipient_failure_does_not_pause_others_or_notify_false_hold(self):
-        self.send.side_effect = SendFailure('UserPrivacyRestrictedError', pause=False)
-        self.assertEqual(await self.flow.process(self.message('-200'), self.sender), 'failed')
-        self.assertTrue(self.store.get('active'))
-        self.notify.assert_not_awaited()
-        self.assertEqual(self.store.holds(77, 88, self.quote_id), [])
-
-    async def test_uncertain_send_pauses_and_is_not_replayed_after_restart(self):
-        self.send.side_effect = SendFailure('TimeoutError', uncertain=True)
-        self.assertEqual(await self.flow.process(self.message('-200'), self.sender), 'uncertain')
-        self.assertFalse(self.store.get('active'))
-        self.notify.assert_not_awaited()
-        self.store.close()
-        self.store = Store(self.path)
-        self.store.set('active', True)
-        self.flow.store = self.store
-        self.assertEqual(await self.flow.process(self.message('-200'), self.sender), 'duplicate')
-        self.send.assert_awaited_once()
-
     async def test_owner_notice_failure_is_recorded_and_pauses_new_replies(self):
         self.notify.return_value = False
         self.assertEqual(await self.flow.process(self.message(), self.sender), 'notice_failed')
@@ -201,9 +184,10 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_hold_notification_is_not_limited_by_customer_reply_limit(self):
         self.flow.max_per_minute = 1
-        self.assertEqual(await self.flow.process(self.message('-200'), self.sender), 'discount')
+        self.store.reserve(-123, 99, 99, 's25', 120, now=self.now)
+        self.store.finish(-123, 99, 'sent')
         self.assertEqual(await self.flow.process(self.message(message_id=201), self.sender), 'hold')
-        self.send.assert_awaited_once()
+        self.send.assert_not_awaited()
         self.notify.assert_awaited_once()
 
     async def test_followup_written_during_multipart_quote_is_not_treated_as_pre_quote(self):

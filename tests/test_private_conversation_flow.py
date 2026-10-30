@@ -83,9 +83,9 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quote['sent_message_ids'], [900])
         self.assertIn('@buyer_test', self.notices()[0].text)
         self.assertNotIn('Получатель: 88', self.notices()[0].text)
-        await self.client._dispatch_update(self.update('-200', number=201, reply_to=900))
-        self.assertEqual(self.client.send_message.await_args.args[1], 'Нет')
         count = self.client.send_message.await_count
+        await self.client._dispatch_update(self.update('-200', number=201, reply_to=900))
+        self.assertEqual(self.client.send_message.await_count, count)
         await self.client._dispatch_update(self.update('отложите', number=202, reply_to=900))
         self.assertEqual(self.client.send_message.await_count, count)
         self.assertIn('@buyer_test', self.notices()[-1].text)

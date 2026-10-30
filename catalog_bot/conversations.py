@@ -8,7 +8,7 @@ import time
 import unicodedata
 
 from .catalog import build_reply
-from .engine import Incoming, SendFailure
+from .engine import Incoming
 from .followup_intent import classify_followup, resolve_hold
 
 
@@ -70,6 +70,8 @@ class ConversationReplies:
             if quote is None or message.timestamp < int(quote['created']):
                 return 'untracked'
             kind = classify_followup(message.text)
+            if kind == 'discount':
+                return 'ignored'
             last = self.store.latest_followup(account_id, message.sender_id, quote['quote_id'])
             waiting = last and last['kind'] == 'clarify' and last['status'] == 'sent'
             selected = None
@@ -82,10 +84,6 @@ class ConversationReplies:
                 kind = 'hold' if selected else 'clarify'
             if kind is None:
                 return 'ignored'
-            # Hold requests only notify the owner; they do not consume the
-            # limit for messages sent to buyers.
-            if kind == 'discount' and self.store.sent_since(now - 60) >= self.max_per_minute:
-                return 'rate_limited'
             if not self.store.reserve_followup(account_id, message.sender_id, message.message_id,
                                                quote['quote_id'], kind, now=now):
                 return 'duplicate'
@@ -137,21 +135,3 @@ class ConversationReplies:
                 if holds:
                     self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds, 'sent')
                 return kind
-            try:
-                await self.send(message.sender_id, message.message_id, 'Нет')
-            except SendFailure as exc:
-                status = 'uncertain' if exc.uncertain else 'failed'
-                self.store.finish_followup(account_id, message.sender_id, message.message_id, status, str(exc))
-                if exc.uncertain or exc.pause:
-                    self.store.set('active', False)
-                return status
-            except asyncio.CancelledError:
-                self.store.finish_followup(account_id, message.sender_id, message.message_id, 'uncertain', 'cancelled_during_send')
-                self.store.set('active', False)
-                raise
-            except Exception:
-                self.store.finish_followup(account_id, message.sender_id, message.message_id, 'uncertain', 'unexpected_send_error')
-                self.store.set('active', False)
-                return 'uncertain'
-            self.store.finish_followup(account_id, message.sender_id, message.message_id, 'sent')
-            return kind
