@@ -85,10 +85,9 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Получатель: 88', self.notices()[0].text)
         await self.client._dispatch_update(self.update('-200', number=201, reply_to=900))
         self.assertEqual(self.client.send_message.await_args.args[1], 'Нет')
+        count = self.client.send_message.await_count
         await self.client._dispatch_update(self.update('отложите', number=202, reply_to=900))
-        call = self.client.send_message.await_args
-        self.assertEqual(call.args, (types.InputPeerUser(88, 800), 'Ок'))
-        self.assertNotIn('reply_to', call.kwargs)
+        self.assertEqual(self.client.send_message.await_count, count)
         self.assertIn('@buyer_test', self.notices()[-1].text)
         self.assertIn('Galaxy S25 12/256 Navy', self.notices()[-1].text)
         self.assertIn('49 000 ₽', self.notices()[-1].text)
@@ -96,15 +95,17 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.products(), self.products)
         self.assertEqual(self.store.holds(77, 88, quote['quote_id'])[0]['status'], 'sent')
 
-    async def test_ambiguous_hold_then_reply_to_clarification_selects_the_chosen_offer(self):
+    async def test_ambiguous_hold_notifies_owner_then_explicit_selection_is_silent(self):
         black = Product('Galaxy S25 12/512 Black', Decimal('50000'), None)
         self.store.replace_products(self.products + [black])
         await self.client._dispatch_update(self.update('s25', group=True, number=28))
+        count = self.client.send_message.await_count
         await self.client._dispatch_update(self.update('отложите', number=201, reply_to=900))
-        self.assertIn('Какую именно позицию', self.client.send_message.await_args.args[1])
-        self.assertEqual(len(self.notices()), 1)
-        await self.client._dispatch_update(self.update('черный 512', number=202, reply_to=901))
-        self.assertEqual(self.client.send_message.await_args.args[1], 'Ок')
+        self.assertEqual(self.client.send_message.await_count, count)
+        self.assertIn('отложите', self.notices()[-1].text.lower())
+        self.assertIn('уточнить', self.notices()[-1].text.lower())
+        await self.client._dispatch_update(self.update('черный 512', number=202, reply_to=900))
+        self.assertEqual(self.client.send_message.await_count, count)
         self.assertIn('12/512 Black', self.notices()[-1].text)
         self.assertNotIn('12/256 Navy', self.notices()[-1].text)
 
@@ -128,8 +129,9 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.store = Store(self.path)
         self.bind_app()
         hold = self.update('отложите', number=201, reply_to=900, username=None)
+        before = self.client.send_message.await_count
         await self.client._dispatch_update(hold)
-        self.assertEqual(self.client.send_message.await_args.args[1], 'Ок')
+        self.assertEqual(self.client.send_message.await_count, before)
         self.assertIn('<a href="tg://user?id=88">Илья</a>', self.notices()[-1].text)
         count, notices = self.client.send_message.await_count, len(self.notices())
         await self.client._dispatch_update(hold)
@@ -141,9 +143,10 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         blue = Product('Galaxy S26 12/256 Sky Blue SM-S942B/DS', Decimal('58000'), None, country='🇿🇦')
         self.store.replace_products([black, blue])
         await self.client._dispatch_update(self.update('s26', group=True, number=28))
+        count = self.client.send_message.await_count
         text = '• Galaxy S26 12/256 Black SM-S942B/DS\n🇿🇦 — 57 300 ₽'
         await self.client._dispatch_update(self.update('отложи', number=201, reply_to=900, quote_text=text))
-        self.assertEqual(self.client.send_message.await_args.args[1], 'Ок')
+        self.assertEqual(self.client.send_message.await_count, count)
         self.assertIn('12/256 Black', self.notices()[-1].text)
         self.assertNotIn('SM-S942B/DS', self.notices()[-1].text)
         self.assertIn('57 300 ₽', self.notices()[-1].text)
@@ -153,8 +156,9 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         black = Product('Galaxy S25 12/512 Black', Decimal('50000'), None)
         self.store.replace_products(self.products + [black])
         await self.client._dispatch_update(self.update('s25', group=True, number=28))
+        count = self.client.send_message.await_count
         await self.client._dispatch_update(self.update('отложите', number=201, reply_to=900, quote_text='12/512 Black'))
-        self.assertEqual(self.client.send_message.await_args.args[1], 'Ок')
+        self.assertEqual(self.client.send_message.await_count, count)
         self.assertIn('12/512 Black', self.notices()[-1].text)
 
     async def test_quote_referencing_a_different_dialog_is_not_used(self):

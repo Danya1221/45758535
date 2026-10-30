@@ -249,7 +249,7 @@ class Store:
     def sent_since(self, since: float) -> int:
         return self.db.execute('''SELECT
             (SELECT COUNT(*) FROM deliveries WHERE status='sent' AND created>?) +
-            (SELECT COUNT(*) FROM followups WHERE status='sent' AND created>?)''', (since, since)).fetchone()[0]
+            (SELECT COUNT(*) FROM followups WHERE status='sent' AND detail!='owner_notice' AND created>?)''', (since, since)).fetchone()[0]
 
     def recent(self) -> list[dict]:
         return [dict(row) for row in self.db.execute("SELECT chat_id,message_id,status,detail,created FROM deliveries ORDER BY created DESC LIMIT 10")]

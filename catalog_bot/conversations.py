@@ -82,68 +82,76 @@ class ConversationReplies:
                 kind = 'hold' if selected else 'clarify'
             if kind is None:
                 return 'ignored'
-            if self.store.sent_since(now - 60) >= self.max_per_minute:
+            # Hold requests only notify the owner; they do not consume the
+            # limit for messages sent to buyers.
+            if kind == 'discount' and self.store.sent_since(now - 60) >= self.max_per_minute:
                 return 'rate_limited'
             if not self.store.reserve_followup(account_id, message.sender_id, message.message_id,
                                                quote['quote_id'], kind, now=now):
                 return 'duplicate'
-            holds = []
-            if kind == 'hold':
-                holds = self.store.reserve_hold(account_id, message.sender_id, quote['quote_id'], [selected], now=now)
-            response = 'Нет' if kind == 'discount' else 'Ок'
-            if kind == 'clarify':
-                response = ('Какую именно позицию отложить? Напишите модель, память и цвет '
-                            'или скопируйте нужную строку из списка.')
-            elif kind == 'hold' and not holds:
-                existing = self.store.holds(account_id, message.sender_id, quote['quote_id'])
-                if not existing or any(row['status'] != 'sent' for row in existing):
-                    response = 'Запрос на бронь требует подтверждения продавца.'
+            if kind in {'hold', 'clarify'}:
+                holds = (self.store.reserve_hold(account_id, message.sender_id, quote['quote_id'],
+                                                 [selected], now=now) if kind == 'hold' else [])
+                # Do not notify twice for the same product in the same quote.
+                if kind == 'hold' and not holds:
+                    self.store.finish_followup(account_id, message.sender_id, message.message_id,
+                                               'sent', 'owner_notice')
+                    return kind
+                request_text = html.escape(quote['request_text'][:300])
+                buyer_text = html.escape(message.text[:500])
+                if holds:
+                    product_text = html.escape(build_reply(holds, intro='')[:1500])
+                    notice = (f'📌 Попросил отложить: {user_tag(sender)}\n'
+                              f'{product_text}\n\nСообщение покупателя: {buyer_text}\n'
+                              f'Запрос: {request_text}')
+                else:
+                    candidates_text = html.escape(build_reply(candidates, intro='')[:1500])
+                    quoted = html.escape(quoted_text[:500]) if quoted_text else ''
+                    notice = (f'📌 Просьба отложить: {user_tag(sender)}\n'
+                              f'Не удалось однозначно определить товар — нужно уточнить у покупателя.\n'
+                              f'Сообщение покупателя: {buyer_text}\n'
+                              + (f'Цитата: {quoted}\n' if quoted else '')
+                              + f'Запрос: {request_text}\n\nПредложенные товары:\n{candidates_text}')
+                try:
+                    notified = await self.notify(notice, parse_mode='HTML')
+                except asyncio.CancelledError:
+                    self.store.finish_followup(account_id, message.sender_id, message.message_id,
+                                               'uncertain', 'cancelled_during_notice')
+                    if holds:
+                        self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds,
+                                               'uncertain', 'cancelled_during_notice')
+                    self.store.set('active', False)
+                    raise
+                except Exception:
+                    notified = False
+                if notified is False:
+                    self.store.finish_followup(account_id, message.sender_id, message.message_id,
+                                               'uncertain', 'owner_notification_failed')
+                    if holds:
+                        self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds,
+                                               'uncertain', 'owner_notification_failed')
+                    self.store.set('active', False)
+                    return 'notice_failed'
+                self.store.finish_followup(account_id, message.sender_id, message.message_id,
+                                           'sent', 'owner_notice')
+                if holds:
+                    self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds, 'sent')
+                return kind
             try:
-                sent_ids = await self.send(message.sender_id, message.message_id, response)
-                if sent_ids:
-                    # A buyer may reply directly to our clarification message,
-                    # rather than to the original price message.
-                    self.store.save_quote(account_id, message.sender_id, quote['chat_id'], quote['message_id'],
-                                          quote['request_text'], quote['products'], now=now,
-                                          sent_message_ids=sent_ids)
+                await self.send(message.sender_id, message.message_id, 'Нет')
             except SendFailure as exc:
                 status = 'uncertain' if exc.uncertain else 'failed'
                 self.store.finish_followup(account_id, message.sender_id, message.message_id, status, str(exc))
-                if holds:
-                    self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds, status, str(exc))
                 if exc.uncertain or exc.pause:
                     self.store.set('active', False)
                 return status
             except asyncio.CancelledError:
                 self.store.finish_followup(account_id, message.sender_id, message.message_id, 'uncertain', 'cancelled_during_send')
-                if holds:
-                    self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds, 'uncertain', 'cancelled_during_send')
                 self.store.set('active', False)
                 raise
             except Exception:
                 self.store.finish_followup(account_id, message.sender_id, message.message_id, 'uncertain', 'unexpected_send_error')
-                if holds:
-                    self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds, 'uncertain', 'unexpected_send_error')
                 self.store.set('active', False)
                 return 'uncertain'
             self.store.finish_followup(account_id, message.sender_id, message.message_id, 'sent')
-            if holds:
-                product_text = build_reply(holds, intro='')[:1500]
-                request_text = quote['request_text'][:300]
-                notice = (f'📌 Попросил отложить: {user_tag(sender)}\n'
-                          f'{html.escape(product_text)}\n\nЗапрос: {html.escape(request_text)}')
-                try:
-                    notified = await self.notify(notice, parse_mode='HTML')
-                except asyncio.CancelledError:
-                    self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds, 'uncertain', 'cancelled_during_notice')
-                    self.store.set('active', False)
-                    raise
-                except Exception:
-                    notified = False
-                self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], holds,
-                                       'uncertain' if notified is False else 'sent',
-                                       'owner_notification_failed' if notified is False else '')
-                if notified is False:
-                    self.store.set('active', False)
-                    return 'notice_failed'
             return kind
