@@ -33,11 +33,13 @@ class SendFailure(Exception):
 class Engine:
     def __init__(self, store: Store, send: Callable[[int, int, str], Awaitable[list[int] | None]],
                  *, dedup_seconds: int = 120, max_per_minute: int = 10, max_age: int = 120,
-                 contact: str = "", clock: Callable[[], float] = time.time):
+                 contact: str = "", clock: Callable[[], float] = time.time,
+                 reply_delay_seconds: float = 0):
         self.store, self.send = store, send
         self.dedup_seconds, self.max_per_minute, self.max_age = dedup_seconds, max_per_minute, max_age
         self.contact, self.clock = contact, clock
         self.lock = asyncio.Lock()
+        self.reply_delay_seconds = reply_delay_seconds
 
     async def process(self, message: Incoming) -> str:
         if message.outgoing or message.is_bot or not message.is_group or message.forwarded or message.sender_id <= 0:
@@ -56,14 +58,25 @@ class Engine:
                 return "old"
             version = self.store.get('catalog_version', 0)
             pricing_version = self.store.get('pricing_version', 0)
+            account_id = self.store.get('telegram_account_id', 0)
+            enabled_at = self.store.get('monitor_enabled_at', 0)
             quoted_products = price_products(self.store.products(), self.store.markup_policy())
             classification, found = await asyncio.to_thread(find_products, message.text, quoted_products, self.store.get('allow_bare', True))
             if not found:
                 return "sell" if classification == 'sell' else "no_match"
+            if self.store.delivery(message.chat_id, message.message_id):
+                return 'duplicate'
+            if self.reply_delay_seconds:
+                await asyncio.sleep(self.reply_delay_seconds)
+                now = self.clock()
+                if not -30 <= now - message.timestamp <= self.max_age:
+                    return 'old'
             # Pause, chat removal or inventory updates may happen while matching.
             if (not self.store.get('active', False) or message.chat_id not in self.store.chats()
                     or version != self.store.get('catalog_version', 0)
                     or pricing_version != self.store.get('pricing_version', 0)
+                    or account_id != self.store.get('telegram_account_id', 0)
+                    or enabled_at != self.store.get('monitor_enabled_at', 0)
                     or not self.store.get('price_ready', True)):
                 return "cancelled"
             if self.store.sent_since(now - 60) >= self.max_per_minute:

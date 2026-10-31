@@ -59,6 +59,7 @@ class Config:
     price_button: str = ''
     price_interval: int = 600
     telegram_session: str = field(default='', repr=False)
+    reply_delay_seconds: int = 0
 
     @classmethod
     def from_env(cls, *, login_only: bool = False):
@@ -74,7 +75,8 @@ class Config:
                          os.getenv('CONTACT', '')[:300], int(os.getenv('MAX_REPLIES_PER_MINUTE', '10')),
                          int(os.getenv('DEDUP_SECONDS', '120')), os.getenv('PRICE_BOT_USERNAME', '').strip(),
                          os.getenv('PRICE_REQUEST_TEXT', '').strip(), os.getenv('PRICE_BUTTON_TEXT', '').strip(),
-                         int(os.getenv('PRICE_REFRESH_SECONDS', '600')), os.getenv('TELEGRAM_SESSION', '').strip())
+                         int(os.getenv('PRICE_REFRESH_SECONDS', '600')), os.getenv('TELEGRAM_SESSION', '').strip(),
+                         int(os.getenv('REPLY_DELAY_SECONDS', '10')))
         except ValueError as exc:
             raise ValueError('API_ID, OWNER_ID и лимиты должны быть целыми числами') from exc
         if result.api_id <= 0 or (not login_only and result.owner_id <= 0):
@@ -83,6 +85,8 @@ class Config:
             raise ValueError('Лимит ответов: 1–30 в минуту; DEDUP_SECONDS: 0–86400')
         if not 60 <= result.price_interval <= 86400:
             raise ValueError('PRICE_REFRESH_SECONDS: от 60 до 86400 секунд')
+        if not 0 <= result.reply_delay_seconds <= 300:
+            raise ValueError('REPLY_DELAY_SECONDS: от 0 до 300 секунд')
         if result.price_bot and bool(result.price_request) == bool(result.price_button):
             raise ValueError('Для источника прайса укажи одно из PRICE_REQUEST_TEXT или PRICE_BUTTON_TEXT')
         if not login_only:
@@ -183,7 +187,8 @@ class Application:
         self.group_directory = GroupDirectory(store, client, self.account_available, self.update_chats_panel)
         self.price_schedule = PriceSchedule(store, config.price_interval)
         self.engine = Engine(store, self.send_reply, max_per_minute=config.max_per_minute,
-                             dedup_seconds=config.dedup_seconds, contact=config.contact)
+                             dedup_seconds=config.dedup_seconds, contact=config.contact,
+                             reply_delay_seconds=config.reply_delay_seconds)
         self.conversations = ConversationReplies(store, self.send_reply, self.notify, self.engine.lock,
                                                  max_per_minute=config.max_per_minute)
         self.price_sync = PriceSync(store, self.price_client, config.price_bot, self.notify, request_text=config.price_request,
@@ -602,6 +607,8 @@ class Application:
         parts = split_messages(text)
         sent_parts = 0
         sent_ids = []
+        account_id = self.store.get('telegram_account_id', 0)
+        enabled_at = self.store.get('monitor_enabled_at', 0)
 
         def failure(reason, *, uncertain=False, pause=True):
             prefix = f'partial_{sent_parts}_of_{len(parts)}_parts;' if sent_parts else ''
@@ -610,7 +617,11 @@ class Application:
         try:
             for part in parts:
                 if sent_parts:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(max(1, self.config.reply_delay_seconds))
+                    if (not self.store.get('active', False)
+                            or account_id != self.store.get('telegram_account_id', 0)
+                            or enabled_at != self.store.get('monitor_enabled_at', 0)):
+                        raise failure('cancelled_between_parts', pause=False)
                 sent = await asyncio.wait_for(self.client.send_message(recipient, part, parse_mode=None,
                                                                        link_preview=False), timeout=30)
                 sent_parts += 1
@@ -803,7 +814,8 @@ class Application:
                 f"Названия без «куплю»: {'учитываются' if self.store.get('allow_bare', True) else 'пропускаются'}\n"
                 'Куда отвечаем: в личку автору запроса, от подключённого аккаунта.\n'
                 f'Лимит: {self.config.max_per_minute} ответов в минуту.\n'
-                'В личке после цены: на скидку — «Нет», на бронь — «Ок» и уведомление владельцу.\n'
+                f'Задержка ответа: {self.config.reply_delay_seconds} сек.\n'
+                'В личке после цены: автоответов нет, об отложке уведомляется владелец.\n'
                 'Остаток не уменьшается при предложении товара.\n\n' +
                 format_policy(self.store.markup_policy()))
 

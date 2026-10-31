@@ -78,6 +78,7 @@ class RailwayTests(unittest.TestCase):
         os.environ['TELEGRAM_SESSION'] = value
         config = Config.from_env()
         self.assertEqual(config.telegram_session, value)
+        self.assertEqual(config.reply_delay_seconds, 10)
         self.assertNotIn(value, repr(config))
 
     def test_config_rejects_invalid_session_before_creating_data(self):

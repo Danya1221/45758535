@@ -100,6 +100,46 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.process(self.incoming())
         self.assertEqual(await self.engine.process(self.incoming(message_id=2, sender_id=56)), 'rate_limited')
 
+    async def test_ten_second_delay_serializes_concurrent_replies(self):
+        now = [1000]
+        sleeps = []
+        self.engine.clock = lambda: now[0]
+        self.engine.reply_delay_seconds = 10
+        async def sleep(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+        with patch('catalog_bot.engine.asyncio.sleep', side_effect=sleep):
+            results = await asyncio.gather(self.engine.process(self.incoming()),
+                                          self.engine.process(self.incoming(message_id=2, sender_id=56)))
+        self.assertEqual(results, ['sent', 'sent'])
+        self.assertEqual(sleeps, [10, 10])
+        self.assertEqual(self.store.delivery(-100123, 1)['created'], 1010)
+        self.assertEqual(self.store.delivery(-100123, 2)['created'], 1020)
+
+    async def test_pause_during_delay_cancels_without_reserving_or_sending(self):
+        self.engine.reply_delay_seconds = 10
+        async def sleep(seconds):
+            self.store.set('active', False)
+        with patch('catalog_bot.engine.asyncio.sleep', side_effect=sleep):
+            self.assertEqual(await self.engine.process(self.incoming()), 'cancelled')
+        self.assertEqual(self.sent, [])
+        self.assertIsNone(self.store.delivery(-100123, 1))
+
+    async def test_price_change_during_delay_cancels_old_offer(self):
+        self.engine.reply_delay_seconds = 10
+        async def sleep(seconds):
+            self.store.replace_products(parse_catalog('iPhone 17 256GB Black SIM|90000|2'))
+        with patch('catalog_bot.engine.asyncio.sleep', side_effect=sleep):
+            self.assertEqual(await self.engine.process(self.incoming()), 'cancelled')
+        self.assertEqual(self.sent, [])
+
+    async def test_known_duplicate_does_not_wait_again(self):
+        await self.engine.process(self.incoming())
+        self.engine.reply_delay_seconds = 10
+        with patch('catalog_bot.engine.asyncio.sleep') as sleep:
+            self.assertEqual(await self.engine.process(self.incoming()), 'duplicate')
+        sleep.assert_not_called()
+
     async def test_uncertain_send_pauses_and_is_not_retried(self):
         async def send(*args):
             raise SendFailure('timeout', uncertain=True)
