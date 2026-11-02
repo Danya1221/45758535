@@ -14,6 +14,7 @@ from .storage import Store
 
 
 REASONS = {
+    'excluded': 'автор добавлен в исключения',
     'received': 'сообщение получено, обработка ещё не завершена',
     'sent': 'ответ отправлен',
     'own_message': 'сообщение отправлено подключённым аккаунтом; на свои сообщения бот не отвечает',
@@ -105,6 +106,8 @@ def diagnose_message(store: Store, message: Incoming, *, account_ready: bool = T
         return MessageDiagnostic('not_group')
     if message.sender_id <= 0:
         return MessageDiagnostic('missing_sender')
+    if store.is_excluded(message.sender_id):
+        return MessageDiagnostic('excluded')
     if not message.text.strip():
         return MessageDiagnostic('empty')
     if len(message.text) > 12000:

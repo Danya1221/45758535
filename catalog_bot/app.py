@@ -7,6 +7,7 @@ import html
 import logging
 import math
 import os
+import re
 import time
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -115,6 +116,7 @@ class Inputs(StatesGroup):
     login_qr = State()
     price_timer = State()
     group_search = State()
+    exclusion = State()
 
 
 class OwnerOnly(BaseMiddleware):
@@ -143,6 +145,7 @@ def menu():
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup'), ('🔧 Почему нет ответа', 'why')],
+        [('🚫 Исключения', 'exclude:list:0')],
         [('▶️ Включить ответы', 'run'), ('⏸ Пауза', 'pause')],
     ])
 
@@ -597,6 +600,8 @@ class Application:
         # as reply_to in a different dialog or as a fallback destination.
         if recipient_id <= 0:
             raise SendFailure('recipient_not_user', pause=False)
+        if self.store.is_excluded(recipient_id):
+            raise SendFailure('excluded', pause=False)
         try:
             recipient = await asyncio.wait_for(self.client.get_input_entity(types.PeerUser(recipient_id)), 10)
         except (FloodWaitError, errors.FloodPremiumWaitError) as exc:
@@ -627,6 +632,8 @@ class Application:
                             or account_id != self.store.get('telegram_account_id', 0)
                             or enabled_at != self.store.get('monitor_enabled_at', 0)):
                         raise failure('cancelled_between_parts', pause=False)
+                if self.store.is_excluded(recipient_id):
+                    raise failure('excluded', pause=False)
                 sent = await asyncio.wait_for(self.client.send_message(recipient, part, parse_mode=None,
                                                                        link_preview=False), timeout=30)
                 sent_parts += 1
@@ -655,7 +662,8 @@ class Application:
 
     async def private_reply(self, event):
         if (not event.is_private or event.out or not self.auth.ready
-                or not self.account_available.is_set() or not self.store.get('active', False)):
+                or not self.account_available.is_set() or not self.store.get('active', False)
+                or (getattr(event, 'sender_id', None) and self.store.is_excluded(event.sender_id))):
             return
         try:
             sender = await asyncio.wait_for(event.get_sender(), 10)
@@ -709,6 +717,9 @@ class Application:
                 return
             if not event.sender_id or event.sender_id <= 0:
                 record('missing_sender')
+                return
+            if self.store.is_excluded(event.sender_id):
+                record('excluded')
                 return
             if not (event.raw_text or '').strip():
                 record('empty')
@@ -955,6 +966,62 @@ class Application:
             'Категории:\n' + categories,
             parse_mode=None, reply_markup=menu())
 
+    async def show_exclusions(self, message: Message, page: int = 0):
+        users = self.store.excluded_users()
+        pages = max(1, (len(users) + 7) // 8)
+        page = max(0, min(page, pages - 1))
+        rows = []
+        for user in users[page * 8:(page + 1) * 8]:
+            label = '@' + user['username'] if user['username'] else (user['display_name'] or 'Пользователь')
+            rows.append([('✖ ' + label[:55], f"exclude:remove:{user['user_id']}:{page}")])
+        navigation = []
+        if page > 0:
+            navigation.append(('⬅️', f'exclude:list:{page - 1}'))
+        if page + 1 < pages:
+            navigation.append(('➡️', f'exclude:list:{page + 1}'))
+        if navigation:
+            rows.append(navigation)
+        rows.extend([[('➕ Добавить человека', 'exclude:add')], [('↩️ Меню', 'home')]])
+        await message.answer(f'🚫 Исключения: {len(users)}. Страница {page}/{pages}.\n'
+                             'Бот не отвечает этим людям во всех выбранных группах.\n'
+                             'Чтобы убрать человека из списка, нажми на его имя.',
+                             reply_markup=keyboard(rows), parse_mode=None)
+
+    async def add_exclusion(self, message: Message, state: FSMContext, username: str | None = None):
+        origin = getattr(message, 'forward_origin', None)
+        user = getattr(origin, 'sender_user', None) or getattr(message, 'forward_from', None)
+        from_username = user is None
+        value = (username if username is not None else (message.text or '')).strip()
+        if user is None and (origin is not None or getattr(message, 'forward_date', None)):
+            await message.answer('Не вижу автора пересланного сообщения: возможно, он скрыл пересылку. Пришли его @username или /cancel.')
+            return
+        if user is None:
+            if not re.fullmatch(r'@[A-Za-z0-9_]{4,32}', value):
+                await message.answer('Пришли @username или перешли сообщение человека. Отмена: /cancel.')
+                return
+            if not await self.require_account(message):
+                return
+            try:
+                user = await asyncio.wait_for(self.client.get_entity(value), timeout=15)
+            except (ValueError, RPCError, OSError, asyncio.TimeoutError):
+                await message.answer('Не удалось найти пользователя. Проверь @username или перешли его сообщение.')
+                return
+        user_id = getattr(user, 'id', None)
+        if (type(user_id) is not int or user_id <= 0 or getattr(user, 'bot', False) is True
+                or getattr(user, 'is_bot', False)
+                or (from_username and not isinstance(user, types.User))):
+            await message.answer('Нужен обычный пользователь, а не бот или группа.')
+            return
+        current_username = getattr(user, 'username', None) or ''
+        if not re.fullmatch(r'[A-Za-z0-9_]{1,32}', current_username):
+            current_username = ''
+        name = ' '.join(filter(None, (getattr(user, 'first_name', ''), getattr(user, 'last_name', ''))))
+        self.store.exclude_user(user_id, current_username, name)
+        await state.clear()
+        label = '@' + current_username if current_username else (name or 'Пользователь')
+        await message.answer(f'Добавил {label[:160]} в исключения.', parse_mode=None)
+        await self.show_exclusions(message)
+
     async def show_test(self, message: Message, text: str):
         products = price_products(self.store.products(), self.store.markup_policy())
         if not products:
@@ -1030,7 +1097,7 @@ class Application:
                                  '4. /test — проверить запрос.\n5. /run — включить ответы.\n\n'
                                  '/pause — остановить; /status — статус; /stock — текущий список; '
                                  '/bare — запросы без «куплю»; /intro — начало ответа; /tail — последние отправки; '
-                                 '/why — почему нет ответа в группе.', reply_markup=menu())
+                                 '/why — почему нет ответа в группе; /exclude — исключения.', reply_markup=menu())
 
         @dp.message(Command('login'))
         async def login_account(message: Message, state: FSMContext):
@@ -1116,6 +1183,16 @@ class Application:
             else:
                 await state.clear()
                 await self.show_chats(message, query='')
+
+        @dp.message(Command('exclude'))
+        async def exclusions(message: Message, state: FSMContext):
+            value = (message.text or '').partition(' ')[2].strip()
+            await state.clear()
+            if value:
+                await state.set_state(Inputs.exclusion)
+                await self.add_exclusion(message, state, value)
+            else:
+                await self.show_exclusions(message)
 
         @dp.message(Command('run'))
         async def run(message: Message):
@@ -1290,6 +1367,26 @@ class Application:
                 self.cancel_login()
                 await state.clear()
                 await message.answer('Выбери действие:', reply_markup=menu())
+            elif action == 'exclude:add':
+                await state.set_state(Inputs.exclusion)
+                await message.answer('Пришли @username человека или перешли его сообщение. Отмена: /cancel.')
+            elif action.startswith('exclude:list:'):
+                await state.clear()
+                try:
+                    page = int(action.rsplit(':', 1)[1])
+                except ValueError:
+                    return
+                await self.show_exclusions(message, page)
+            elif action.startswith('exclude:remove:'):
+                try:
+                    _, _, user_id, page = action.split(':')
+                    user_id, page = int(user_id), int(page)
+                except ValueError:
+                    return
+                removed = self.store.unexclude_user(user_id)
+                await state.clear()
+                await message.answer('Человек удалён из исключений.' if removed else 'Этого человека уже нет в исключениях.')
+                await self.show_exclusions(message, page)
             elif action == 'run':
                 await self.activate(message)
             elif action == 'pause':
@@ -1319,6 +1416,10 @@ class Application:
                 except TelegramAPIError:
                     pass
                 await self.show_chats(message, int(page))
+
+        @dp.message(Inputs.exclusion)
+        async def exclusion_input(message: Message, state: FSMContext):
+            await self.add_exclusion(message, state)
 
         @dp.message(Inputs.group_search, F.text, ~F.text.startswith('/'))
         async def group_search_input(message: Message, state: FSMContext):
@@ -1461,7 +1562,8 @@ async def run(config: Config):
             ('markup', 'Наценка по категориям'),
             ('test', 'Проверить запрос'),
             ('why', 'Почему нет ответа в группе'),
-            ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки')]])
+            ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки'),
+            ('exclude', 'Исключения')]])
         store.prune()
         await app.notify('Бот запущен. Проверяю входы для прайса и ответов. Статус: /status.\n'
                          'Ответы с нового аккаунта: /loginqr. Прайс со старого аккаунта сохраняется; при необходимости: /priceloginqr.')

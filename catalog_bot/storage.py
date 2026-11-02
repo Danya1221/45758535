@@ -27,6 +27,10 @@ class Store:
                 id INTEGER PRIMARY KEY, name TEXT NOT NULL, price TEXT, stock INTEGER NOT NULL, sku TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS excluded_users (
+                user_id INTEGER PRIMARY KEY, username TEXT NOT NULL DEFAULT '',
+                display_name TEXT NOT NULL DEFAULT '', created REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS deliveries (
                 chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
                 sender_id INTEGER NOT NULL, request_key TEXT NOT NULL,
@@ -217,6 +221,22 @@ class Store:
 
     def chats(self) -> dict[int, str]:
         return {row['id']: row['title'] for row in self.db.execute("SELECT * FROM chats ORDER BY title")}
+
+    def exclude_user(self, user_id: int, username: str = '', display_name: str = ''):
+        if type(user_id) is not int or user_id <= 0:
+            raise ValueError('Expected a Telegram user')
+        self.db.execute('''INSERT INTO excluded_users(user_id,username,display_name,created) VALUES (?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name''',
+            (user_id, username[:32], display_name[:160], time.time()))
+
+    def is_excluded(self, user_id: int) -> bool:
+        return self.db.execute('SELECT 1 FROM excluded_users WHERE user_id=?', (user_id,)).fetchone() is not None
+
+    def unexclude_user(self, user_id: int) -> bool:
+        return self.db.execute('DELETE FROM excluded_users WHERE user_id=?', (user_id,)).rowcount == 1
+
+    def excluded_users(self):
+        return [dict(row) for row in self.db.execute('SELECT * FROM excluded_users ORDER BY created DESC, user_id')]
 
     def toggle_chat(self, chat_id: int, title: str) -> bool:
         if chat_id in self.chats():

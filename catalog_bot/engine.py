@@ -49,6 +49,8 @@ class Engine:
             return "ignored"
         async with self.lock:
             now = self.clock()
+            if self.store.is_excluded(message.sender_id):
+                return 'excluded'
             if not self.store.get('active', False):
                 return "paused"
             if not self.store.get('price_ready', True):
@@ -82,6 +84,8 @@ class Engine:
                     or enabled_at != self.store.get('monitor_enabled_at', 0)
                     or not self.store.get('price_ready', True)):
                 return "cancelled"
+            if self.store.is_excluded(message.sender_id):
+                return 'excluded'
             if self.store.sent_since(now - 60) >= self.max_per_minute:
                 return "rate_limited"
             if not self.store.reserve(message.chat_id, message.message_id, message.sender_id,
@@ -99,6 +103,9 @@ class Engine:
                                           message.text, found, now=now, sent_message_ids=sent_ids or (),
                                           catalog_generation=generation)
             except SendFailure as exc:
+                if str(exc) == 'excluded':
+                    self.store.finish(message.chat_id, message.message_id, 'cancelled', 'excluded')
+                    return 'excluded'
                 self.store.finish(message.chat_id, message.message_id, 'uncertain' if exc.uncertain else 'failed', str(exc))
                 if exc.uncertain or exc.pause:
                     self.store.set('active', False)

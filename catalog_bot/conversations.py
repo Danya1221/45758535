@@ -56,6 +56,8 @@ class ConversationReplies:
             return 'old'
         async with self.lock:
             now = self.clock()
+            if self.store.is_excluded(message.sender_id):
+                return 'excluded'
             account_id = self.store.get('telegram_account_id', 0)
             if not account_id or not self.store.get('active', False):
                 return 'paused'
