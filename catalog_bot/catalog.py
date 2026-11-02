@@ -139,6 +139,10 @@ def identity(text: str, category: str) -> tuple[str | None, list[str]]:
 @lru_cache(maxsize=4096)
 def parse_spec(text: str) -> Spec:
     n = normalize(text)
+    # Joy-Con is an accessory, even when the title also names the console.
+    # Canonicalize its common spellings on both the query and product side.
+    n = re.sub(r'(?<!\w)(?:joy[\s-]*con|джой[\s-]*кон)(?!\w)', 'joycon', n)
+    n = re.sub(r'\b(?:геймпад\w*|джойстик\w*|контроллер\w*)\b', 'controller', n)
     n = re.sub(r"\b(?:до|бюджет)\s*[:=]?\s*[\d ]+(?:₽|руб|rub)?", " ", n)
     # Structured attributes are removed from model identity, never discarded.
     n = re.sub(r"\b(note|pixel|magic)(?=\d)", r"\1 ", n)
@@ -149,10 +153,17 @@ def parse_spec(text: str) -> Spec:
                   and re.search(r'\b(?:aluminum|aluminium|steel|titanium|active\s+band)\b', n))
     if watch_body:
         category_text = re.sub(r'\bcase\b', '', n)
+    # A console explicitly sold together with a controller is still a console.
+    # A Joy-Con set or a controller bundle on its own is not one.
+    console_with_controller = bool(
+        re.search(r'\bswitch\s+\d+\s*(?:\+|с\s+|with\s+)', category_text)
+        or (re.search(r'\b(?:console|консоль\w*|приставк\w*)\b', category_text)
+            and re.search(r'(?:\+|\bwith\b|\bс\b)', category_text)))
     category = next((kind for kind, pattern in (
         ('case', r'\b(?:чехол\w*|case|cover)\b'),
         ('protector', r'\b(?:стекло|пленка|protector)\b'),
         ('charger', r'\b(?:заряд\w*|charger|кабель|cable|adapter|адаптер\w*|power\s*bank|powerbank)\b'),
+        ('controller', r'\b(?:controller|joycon|gamepad|joystick)\b' if not console_with_controller else r'(?!)'),
         ('accessory', r'\b(?:lens\s+kit|charging\s+pouch)\b'),
         ('parts', r'\b(?:дисплей|экран|аккумулятор|запчаст\w*|replacement)\b'),
     ) if re.search(pattern, category_text)), 'device')
