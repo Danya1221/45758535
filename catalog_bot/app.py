@@ -161,6 +161,7 @@ CATALOG_PROMPT = (
     'Цена и артикул необязательны. Если остаток пропущен — считаем, что товар есть; '
     '0 — не предлагать. Новый список целиком заменит старый.\n'
     'Для автоматического резерва укажи остаток числом. Резервы: /reserves.\n'
+    'Для Samsung Galaxy S укажи Global или полный код модели, чтобы подтвердить версию.\n'
     'Пример файла: /sample. Отмена: /cancel.'
 )
 
@@ -1027,7 +1028,7 @@ class Application:
         if not products:
             await message.answer('Сначала загрузи список: /catalog')
             return
-        report = await asyncio.to_thread(inspect_request, text, products, self.store.get('allow_bare', True))
+        report = await asyncio.to_thread(inspect_request, text, products, self.store.get('allow_bare', True), regional_policy=True)
         classification, found = report.classification, report.products
         found = select_offers(found)
         labels = {'buy': 'запрос на покупку', 'bare': 'название товара без «куплю»',

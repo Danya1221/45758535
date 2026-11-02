@@ -85,18 +85,18 @@ class OfferEngineTests(unittest.IsolatedAsyncioTestCase):
         quote = self.store.quote_for_reply(77, 55, 900, now=1000)
         self.assertEqual({p.country for p in quote['products']}, {'🇵🇾'})
 
-    async def test_reported_three_samsung_offers_only_sends_cheapest(self):
+    async def test_reported_three_samsung_offers_only_sends_cheapest_global(self):
         za = Product('Galaxy S26 12/256 Cobalt Violet SM-S942B/DS', Decimal('57300'), None, country='🇿🇦')
         kz = Product('Galaxy S26 12/256 Cobalt Violet SM-S942B/DS', Decimal('58200'), None, country='🇰🇿')
         hk = Product('Galaxy S26 12/256 Cobalt Violet SM-S9420', Decimal('56700'), None, country='🇭🇰')
         self.store.replace_products([za, kz, hk])
         message = Incoming(-100, 1, 55, 'Samsung Galaxy S26 256 Cobalt Violet', 1000)
         self.assertEqual(await self.engine.process(message), 'sent')
-        self.assertIn('🇭🇰 — 56 700 ₽', self.sent[0])
-        self.assertNotIn('🇿🇦', self.sent[0])
+        self.assertIn('🇿🇦 — 57 300 ₽', self.sent[0])
+        self.assertNotIn('🇭🇰', self.sent[0])
         self.assertNotIn('🇰🇿', self.sent[0])
         quote = self.store.quote_for_reply(77, 55, 900, now=1000)
-        self.assertEqual([p.country for p in quote['products']], ['🇭🇰'])
+        self.assertEqual([p.country for p in quote['products']], ['🇿🇦'])
 
     async def test_region_explicitly_requested_is_not_replaced_by_another(self):
         self.store.replace_products([offer('🇦🇪', 112700), offer('🇵🇾', 111600), offer('🇰🇿', 115000)])

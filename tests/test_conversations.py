@@ -198,6 +198,7 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
             return [920, 921]
 
         engine = Engine(self.store, slow_quote, clock=lambda: self.now)
+        self.store.replace_products([replace(self.products[0], name='Galaxy S25 12/256 Navy SM-S931B/DS')])
         self.assertEqual(await engine.process(Incoming(-123, 29, 88, 's25 navy', 1001)), 'sent')
         quote = self.store.quote_for_reply(77, 88, 920, now=self.now)
         self.assertEqual(quote['created'], 1001)

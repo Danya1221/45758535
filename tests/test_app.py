@@ -162,7 +162,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_markup_changes_quote_and_budget_but_preserves_source_export(self):
         await self.feed('/catalog')
-        await self.feed('Samsung Galaxy S26 Ultra 12/512 Black|91500|1')
+        await self.feed('Samsung Galaxy S26 Ultra 12/512 Black SM-S948B/DS|91500|1')
         await self.feed('/markup phones percent 2')
         await self.feed('/test Куплю сасунг с26 ультра 512 черный до 93 000')
         self.assertIn('Совпадений: 0', self.texts()[-1])

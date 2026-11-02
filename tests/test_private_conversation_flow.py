@@ -27,7 +27,7 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.store = Store(self.path)
         self.store.set('telegram_account_id', 77)
         self.store.set('active', True)
-        self.products = [Product('Galaxy S25 12/256 Navy', Decimal('49000'), None)]
+        self.products = [Product('Galaxy S25 12/256 Navy SM-S931B/DS', Decimal('49000'), None)]
         self.store.replace_products(self.products)
         self.store.toggle_chat(-123, 'Закупки')
         self.transport = bot_helpers.LocalSession()
@@ -96,7 +96,7 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.holds(77, 88, quote['quote_id'])[0]['status'], 'sent')
 
     async def test_ambiguous_hold_notifies_owner_then_explicit_selection_is_silent(self):
-        black = Product('Galaxy S25 12/512 Black', Decimal('50000'), None)
+        black = Product('Galaxy S25 12/512 Black SM-S931B/DS', Decimal('50000'), None)
         self.store.replace_products(self.products + [black])
         await self.client._dispatch_update(self.update('s25', group=True, number=28))
         count = self.client.send_message.await_count
@@ -153,7 +153,7 @@ class PrivateConversationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Sky Blue', self.notices()[-1].text)
 
     async def test_reply_with_a_partial_unique_quote_selects_that_offer(self):
-        black = Product('Galaxy S25 12/512 Black', Decimal('50000'), None)
+        black = Product('Galaxy S25 12/512 Black SM-S931B/DS', Decimal('50000'), None)
         self.store.replace_products(self.products + [black])
         await self.client._dispatch_update(self.update('s25', group=True, number=28))
         count = self.client.send_message.await_count

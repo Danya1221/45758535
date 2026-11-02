@@ -65,7 +65,8 @@ class Engine:
             account_id = self.store.get('telegram_account_id', 0)
             enabled_at = self.store.get('monitor_enabled_at', 0)
             quoted_products = price_products(self.store.products(), self.store.markup_policy())
-            classification, found = await asyncio.to_thread(find_products, message.text, quoted_products, self.store.get('allow_bare', True))
+            classification, found = await asyncio.to_thread(find_products, message.text, quoted_products,
+                                                            self.store.get('allow_bare', True), regional_policy=True)
             if not found:
                 return "sell" if classification == 'sell' else "no_match"
             found = select_offers(found)

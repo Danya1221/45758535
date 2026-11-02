@@ -64,7 +64,7 @@ class MessageDiagnostic:
 def _current_match(store: Store, text: str) -> MessageDiagnostic:
     allow_bare = store.get('allow_bare', True)
     products = price_products(store.products(), store.markup_policy())
-    report = inspect_request(text, products, allow_bare)
+    report = inspect_request(text, products, allow_bare, regional_policy=True)
     if report.products:
         return MessageDiagnostic('not_observed', current_match_details=f'Подходящих позиций сейчас: {len(report.products)}.')
     if not allow_bare and intent(text, True) == 'bare':

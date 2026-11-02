@@ -213,7 +213,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
     async def test_inventory_change_during_matching_cancels_send(self):
         def find(*args):
             return 'buy', parse_catalog('iPhone 17 256GB Black SIM|85000|2')
-        async def work(*args):
+        async def work(*args, **kwargs):
             self.store.replace_products(parse_catalog('iPhone 18|90000|1'))
             return find()
         with patch('catalog_bot.engine.asyncio.to_thread', work):

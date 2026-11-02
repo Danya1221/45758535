@@ -644,7 +644,45 @@ def sony_xm_reason(request: Spec, item: Spec, name: str) -> str | None:
     return None
 
 
-def inspect_request(text: str, products: list[Product], allow_bare: bool = True) -> MatchReport:
+_REGION_LABEL = re.compile(r'\b(?:hong\s*[- ]?\s*kong|гонг\s*[- ]?\s*конг|гонконг|гонг|конг|hk|hkg|'
+                           r'china|chinese|китай\w*|кнр|global|глобал\w*|глобальн\w*|'
+                           r'snapdragon|snap\s*dragon|снап\w*|сн[еэ]п\w*)\b', re.I)
+_HK_LABEL = re.compile(r'\b(?:hong\s*[- ]?\s*kong|гонг\s*[- ]?\s*конг|гонконг|гонг|конг|hk|hkg)\b', re.I)
+_CN_LABEL = re.compile(r'\b(?:china|chinese|китай\w*|кнр)\b', re.I)
+_GLOBAL_LABEL = re.compile(r'\b(?:global|глобал\w*|глобальн\w*)\b', re.I)
+_SNAP_LABEL = re.compile(r'\b(?:snapdragon|snap\s*dragon|снап\w*|сн[еэ]п\w*)\b', re.I)
+_SAMSUNG_S_PHONE = re.compile(r'\b(?:galaxy\s+)?s\s*\d{2}\b', re.I)
+_GLOBAL_SAMSUNG_CODE = re.compile(r'(?<!\w)SM-S\d{3}B(?:/DS)?(?!\w)', re.I)
+
+
+def samsung_version_reason(segment: str, product: Product, *, explicit_sku: bool = False) -> str | None:
+    """Apply the user's regional preference to Samsung S phones, without guessing CPU."""
+    if not _SAMSUNG_S_PHONE.search(product.name):
+        return None
+    hk = bool(_HK_LABEL.search(segment) or '🇭🇰' in segment)
+    china = bool(_CN_LABEL.search(segment) or '🇨🇳' in segment)
+    snap = bool(_SNAP_LABEL.search(segment))
+    global_requested = bool(_GLOBAL_LABEL.search(segment))
+    if global_requested and (hk or china):
+        return 'противоречивая версия'
+    if hk and not ('🇭🇰' in {product.country, product.price_country} or _HK_LABEL.search(product.name)):
+        return 'версия Гонконг'
+    if china and not ('🇨🇳' in {product.country, product.price_country} or _CN_LABEL.search(product.name)):
+        return 'версия Китай'
+    if snap and not _SNAP_LABEL.search(product.name):
+        return 'процессор Snapdragon не указан'
+    if hk or china or (snap and not global_requested) or (explicit_sku and not global_requested):
+        return None
+    if ({'🇭🇰', '🇨🇳'} & {product.country, product.price_country}
+            or _HK_LABEL.search(product.name) or _CN_LABEL.search(product.name)):
+        return 'нужна глобальная версия'
+    if not (_GLOBAL_SAMSUNG_CODE.search(product.name) or _GLOBAL_LABEL.search(product.name)):
+        return 'глобальная версия не подтверждена в прайсе'
+    return None
+
+
+def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
+                    *, regional_policy: bool = False) -> MatchReport:
     classification = intent(text, allow_bare)
     report = MatchReport(classification, [], [])
     if classification not in {'buy', 'bare'}:
@@ -659,6 +697,13 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
         # for that condition, brand, color or version. Words next to it remain.
         specification_text = IDENTIFIER_TOKEN.sub(
             lambda match: identifier_specification(match[0]) if code_key(match[0]) in requested_skus else match[0], segment)
+        samsung_request = bool(_SAMSUNG_S_PHONE.search(normalize(segment))
+                               or re.search(r'\b(?:samsung|galaxy)\b|\bsm-s\d', normalize(segment)))
+        if regional_policy and samsung_request:
+            if _REGION_LABEL.search(specification_text):
+                specification_text = re.sub(r'\bна\s+(?=' + _REGION_LABEL.pattern + r')', ' ', specification_text, flags=re.I)
+                specification_text = re.sub(r'\b(?:версия|версию|version)\b', ' ', specification_text, flags=re.I)
+            specification_text = _REGION_LABEL.sub(' ', specification_text)
         normalized, normalization_notes = normalize_request_with_notes(specification_text)
         clean = clean_request(normalized)
         if normalization_notes:
@@ -742,6 +787,8 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
                     and not re.search(r'\b(?:телефон|смартфон|планшет|ноутбук)\b', clean)):
                 attribute_request = replace(request, category=item.category)
             reason = attribute_reason(attribute_request, item)
+            if not reason and regional_policy and samsung_request and item.brand == 'samsung' and item.category == 'device':
+                reason = samsung_version_reason(segment, product, explicit_sku=sku_match)
             regions = set(re.findall(r'[\U0001F1E6-\U0001F1FF]{2}', segment))
             if not reason and regions and not regions.intersection({product.country, product.price_country}):
                 reason = 'регион'
@@ -769,8 +816,9 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True)
     return report
 
 
-def find_products(text: str, products: list[Product], allow_bare: bool = True) -> tuple[str, list[Product]]:
-    report = inspect_request(text, products, allow_bare)
+def find_products(text: str, products: list[Product], allow_bare: bool = True,
+                  *, regional_policy: bool = False) -> tuple[str, list[Product]]:
+    report = inspect_request(text, products, allow_bare, regional_policy=regional_policy)
     return report.classification, report.products
 
 

@@ -211,7 +211,7 @@ class MonitorFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(self.client.send_message.await_args.args[0], types.InputPeerUser)
 
     def many_offers(self):
-        products = [Product('Galaxy S25 Ultra 12/512 Black', Decimal(69800 + index), None,
+        products = [Product('Galaxy S25 Ultra 12/512 Black SM-S938B/DS', Decimal(69800 + index), None,
                             sku=f'OFFER{index}', country='🇨🇱') for index in range(120)]
         self.store.replace_products(products)
         return products
