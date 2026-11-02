@@ -57,6 +57,7 @@ class Engine:
             if not -30 <= now - message.timestamp <= self.max_age:
                 return "old"
             version = self.store.get('catalog_version', 0)
+            generation = self.store.get('catalog_generation', 0)
             pricing_version = self.store.get('pricing_version', 0)
             account_id = self.store.get('telegram_account_id', 0)
             enabled_at = self.store.get('monitor_enabled_at', 0)
@@ -93,7 +94,8 @@ class Engine:
                 account_id = self.store.get('telegram_account_id', 0)
                 if account_id:
                     self.store.save_quote(account_id, message.sender_id, message.chat_id, message.message_id,
-                                          message.text, found, now=now, sent_message_ids=sent_ids or ())
+                                          message.text, found, now=now, sent_message_ids=sent_ids or (),
+                                          catalog_generation=generation)
             except SendFailure as exc:
                 self.store.finish(message.chat_id, message.message_id, 'uncertain' if exc.uncertain else 'failed', str(exc))
                 if exc.uncertain or exc.pause:

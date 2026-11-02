@@ -76,7 +76,16 @@ class Store:
                 PRIMARY KEY(quote_id, product_key)
             );
             CREATE INDEX IF NOT EXISTS quote_holds_by_created ON quote_holds(created);
+            CREATE TABLE IF NOT EXISTS stock_reservations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL, quote_id INTEGER NOT NULL, product_key TEXT NOT NULL,
+                generation INTEGER NOT NULL, product_id INTEGER NOT NULL, product_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1, created REAL NOT NULL
+            );
         """)
+        quote_columns = {r[1] for r in self.db.execute('PRAGMA table_info(quotes)')}
+        if 'catalog_generation' not in quote_columns:
+            self.db.execute('ALTER TABLE quotes ADD COLUMN catalog_generation INTEGER')
         columns = {r[1] for r in self.db.execute('PRAGMA table_info(products)')}
         for column, definition in [('stock_known', 'INTEGER NOT NULL DEFAULT 1'), ('country', "TEXT NOT NULL DEFAULT ''"),
                                    ('price_country', "TEXT NOT NULL DEFAULT ''"), ('min_qty', 'INTEGER NOT NULL DEFAULT 1'),
@@ -144,6 +153,7 @@ class Store:
                             [(p.name, str(p.price) if p.price is not None else None, p.stock if p.stock is not None else 1,
                               p.sku, int(p.stock is not None), p.country, p.price_country, p.min_qty, json.dumps(p.warnings)) for p in products])
         self.set('catalog_version', self.get('catalog_version', 0) + 1)
+        self.set('catalog_generation', self.get('catalog_generation', 0) + 1)
 
     def replace_products(self, products: list[Product]):
         self.db.execute("BEGIN IMMEDIATE")
@@ -283,11 +293,13 @@ class Store:
 
     def save_quote(self, account_id: int, sender_id: int, chat_id: int, message_id: int,
                    request_text: str, products: list[Product], now: float | None = None,
-                   sent_message_ids=()) -> int:
+                   sent_message_ids=(), catalog_generation=None) -> int:
         """Persist the actual quoted prices, never a reference to the live catalog."""
         if account_id <= 0 or sender_id <= 0 or not products:
             raise ValueError('A quote requires an account, buyer and products')
         now = time.time() if now is None else now
+        if catalog_generation is None:
+            catalog_generation = self.get('catalog_generation', 0)
         serialized = json.dumps([
             {'name': p.name, 'price': str(p.price) if p.price is not None else None,
              'stock': p.stock, 'sku': p.sku, 'country': p.country,
@@ -298,9 +310,9 @@ class Store:
         try:
             self._prune_quote_context(now)
             self.db.execute('''INSERT OR IGNORE INTO quotes
-                (account_id,sender_id,chat_id,message_id,request_text,products,created)
-                VALUES (?,?,?,?,?,?,?)''',
-                (account_id, sender_id, chat_id, message_id, request_text, serialized, now))
+                (account_id,sender_id,chat_id,message_id,request_text,products,created,catalog_generation)
+                VALUES (?,?,?,?,?,?,?,?)''',
+                (account_id, sender_id, chat_id, message_id, request_text, serialized, now, catalog_generation))
             row = self.db.execute('''SELECT quote_id,sender_id FROM quotes
                 WHERE account_id=? AND chat_id=? AND message_id=?''',
                 (account_id, chat_id, message_id)).fetchone()
@@ -405,6 +417,90 @@ class Store:
                     reserved.append(snapshot[key])
             self.db.execute('COMMIT')
             return reserved
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    def reserve_stock_followup(self, account_id, sender_id, message_id, quote_id, product, quantity, now):
+        """Record the request and inventory change together, so replay cannot deduct twice."""
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            if not self.reserve_followup(account_id, sender_id, message_id, quote_id, 'hold', now=now):
+                self.db.execute('COMMIT')
+                return {'status': 'duplicate'}
+            row = self.db.execute('''SELECT * FROM quotes WHERE quote_id=? AND account_id=? AND sender_id=?
+                AND created>=? AND created<=?''', (quote_id, account_id, sender_id, now - 86400, now)).fetchone()
+            quote = self._read_quote(row)
+            if not quote or product not in quote['products']:
+                raise ValueError('Product does not belong to quote')
+            key = self._hold_key(product)
+            cursor = self.db.execute('''INSERT OR IGNORE INTO quote_holds
+                (account_id,sender_id,quote_id,product_key,status,created)
+                VALUES (?,?,?,?,'pending',?)''', (account_id, sender_id, quote_id, key, now))
+            if not cursor.rowcount:
+                self.db.execute('COMMIT')
+                return {'status': 'duplicate_hold'}
+            generation = self.get('catalog_generation', 0)
+            result = {'status': 'unknown'}
+            identity = json.dumps([product_key(product), product.sku], ensure_ascii=False, separators=(',', ':'))
+            if quote['catalog_generation'] is None or quote['catalog_generation'] != generation:
+                result = {'status': 'changed'}
+            elif self.get('price_source') is not None:
+                result = {'status': 'supplier'}
+            elif quantity is None:
+                result = {'status': 'quantity'}
+            elif self.db.execute('''SELECT 1 FROM stock_reservations WHERE account_id=? AND sender_id=?
+                    AND product_key=? AND generation=? AND active=1''',
+                    (account_id, sender_id, identity, generation)).fetchone():
+                result = {'status': 'already'}
+            else:
+                rows = self.db.execute('''SELECT * FROM products WHERE name=? AND sku=? AND country=?
+                    AND price_country=? AND min_qty=?''', (product.name, product.sku, product.country,
+                    product.price_country, product.min_qty)).fetchall()
+                if len(rows) != 1:
+                    result = {'status': 'ambiguous'}
+                elif not rows[0]['stock_known']:
+                    result = {'status': 'unknown'}
+                elif rows[0]['stock'] < quantity:
+                    result = {'status': 'insufficient', 'remaining': rows[0]['stock']}
+                else:
+                    item = rows[0]
+                    self.db.execute('UPDATE products SET stock=stock-? WHERE id=?', (quantity, item['id']))
+                    self.set('catalog_version', self.get('catalog_version', 0) + 1)
+                    reserved = self.db.execute('''INSERT INTO stock_reservations
+                        (account_id,sender_id,quote_id,product_key,generation,product_id,product_name,quantity,created)
+                        VALUES (?,?,?,?,?,?,?,?,?)''', (account_id, sender_id, quote_id, identity, generation,
+                                                        item['id'], product.name, quantity, now))
+                    result = {'status': 'reserved', 'quantity': quantity, 'remaining': item['stock'] - quantity,
+                              'reservation_id': reserved.lastrowid}
+            self.db.execute('COMMIT')
+            return result
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    def stock_reservations(self):
+        return [dict(row) for row in self.db.execute('SELECT * FROM stock_reservations WHERE active=1 ORDER BY id DESC LIMIT 100')]
+
+    def release_stock_reservation(self, reservation_id):
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            row = self.db.execute('SELECT * FROM stock_reservations WHERE id=? AND active=1', (reservation_id,)).fetchone()
+            if not row:
+                result = 'missing'
+            elif row['generation'] != self.get('catalog_generation', 0) or self.get('price_source') is not None:
+                result = 'changed'
+            else:
+                cursor = self.db.execute('UPDATE products SET stock=stock+? WHERE id=? AND stock_known=1',
+                                         (row['quantity'], row['product_id']))
+                if not cursor.rowcount:
+                    result = 'changed'
+                else:
+                    self.db.execute('UPDATE stock_reservations SET active=0 WHERE id=?', (reservation_id,))
+                    self.set('catalog_version', self.get('catalog_version', 0) + 1)
+                    result = 'released'
+            self.db.execute('COMMIT')
+            return result
         except BaseException:
             self.db.execute('ROLLBACK')
             raise

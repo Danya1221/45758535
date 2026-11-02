@@ -156,6 +156,7 @@ CATALOG_PROMPT = (
     'Название | Цена в рублях | Остаток | Артикул\n\n'
     'Цена и артикул необязательны. Если остаток пропущен — считаем, что товар есть; '
     '0 — не предлагать. Новый список целиком заменит старый.\n'
+    'Для автоматического резерва укажи остаток числом. Резервы: /reserves.\n'
     'Пример файла: /sample. Отмена: /cancel.'
 )
 
@@ -1203,6 +1204,27 @@ class Application:
                 writer.writerow([p.name + suffix, str(p.price) if p.price is not None else '', p.stock if p.stock is not None else 'не указан', p.sku])
             await message.answer_document(BufferedInputFile(buffer.getvalue().encode('utf-8-sig'), filename='my_catalog.txt'),
                                           caption='Текущий список с исходными ценами без наценки.')
+
+        @dp.message(Command('reserves'))
+        async def reserves(message: Message):
+            rows = self.store.stock_reservations()
+            if not rows:
+                await message.answer('Активных резервов нет.')
+                return
+            lines = [f"{r['id']}. {r['product_name']} — {r['quantity']} шт. /release {r['id']}" for r in rows]
+            for chunk in split_messages('\n'.join(lines)):
+                await message.answer(chunk)
+
+        @dp.message(Command('release'))
+        async def release(message: Message):
+            parts = (message.text or '').split()
+            if len(parts) != 2 or not parts[1].isdigit():
+                await message.answer('Укажи номер: /release 123. Список резервов: /reserves.')
+                return
+            result = self.store.release_stock_reservation(int(parts[1]))
+            await message.answer({'released': 'Резерв снят, количество возвращено в остаток.',
+                                  'missing': 'Активный резерв не найден.',
+                                  'changed': 'Список товаров изменился. Проверь остаток вручную: /stock.'}[result])
 
         @dp.message(Command('sample'))
         async def sample(message: Message):

@@ -9,7 +9,7 @@ import unicodedata
 
 from .catalog import build_reply
 from .engine import Incoming
-from .followup_intent import classify_followup, resolve_hold
+from .followup_intent import classify_followup, resolve_hold, hold_quantity
 
 
 def user_tag(user) -> str:
@@ -84,12 +84,22 @@ class ConversationReplies:
                 kind = 'hold' if selected else 'clarify'
             if kind is None:
                 return 'ignored'
-            if not self.store.reserve_followup(account_id, message.sender_id, message.message_id,
-                                               quote['quote_id'], kind, now=now):
+            reservation = None
+            if kind == 'hold':
+                reservation = self.store.reserve_stock_followup(account_id, message.sender_id, message.message_id,
+                    quote['quote_id'], selected, hold_quantity(message.text), now)
+                if reservation['status'] == 'duplicate':
+                    return 'duplicate'
+                if reservation['status'] in {'duplicate_hold', 'already'}:
+                    self.store.finish_followup(account_id, message.sender_id, message.message_id, 'sent', 'already_reserved')
+                    if reservation['status'] == 'already':
+                        self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], [selected], 'sent', 'already_reserved')
+                    return 'hold'
+            elif not self.store.reserve_followup(account_id, message.sender_id, message.message_id,
+                                                 quote['quote_id'], kind, now=now):
                 return 'duplicate'
             if kind in {'hold', 'clarify'}:
-                holds = (self.store.reserve_hold(account_id, message.sender_id, quote['quote_id'],
-                                                 [selected], now=now) if kind == 'hold' else [])
+                holds = [selected] if kind == 'hold' else []
                 # Do not notify twice for the same product in the same quote.
                 if kind == 'hold' and not holds:
                     self.store.finish_followup(account_id, message.sender_id, message.message_id,
@@ -99,8 +109,21 @@ class ConversationReplies:
                 buyer_text = html.escape(message.text[:500])
                 if holds:
                     product_text = html.escape(build_reply(holds, intro='')[:1500])
+                    status = reservation['status']
+                    if status == 'reserved':
+                        stock_text = (f"В резерве: {reservation['quantity']} шт. Остаток: {reservation['remaining']} шт.\n"
+                                      f"Снять резерв: /release {reservation['reservation_id']}")
+                    else:
+                        reasons = {'changed': 'список товаров изменился после отправки цены',
+                                   'supplier': 'в прайсе поставщика нет учёта остатков',
+                                   'quantity': 'количество указано неоднозначно',
+                                   'already': 'товар уже в резерве у этого покупателя',
+                                   'ambiguous': 'товар не найден однозначно в текущем списке',
+                                   'unknown': 'остаток не указан',
+                                   'insufficient': f"доступно только {reservation.get('remaining', 0)} шт."}
+                        stock_text = 'Остаток не изменён: ' + reasons.get(status, 'проверь товар вручную') + '.'
                     notice = (f'📌 Попросил отложить: {user_tag(sender)}\n'
-                              f'{product_text}\n\nСообщение покупателя: {buyer_text}\n'
+                              f'{product_text}\n{stock_text}\n\nСообщение покупателя: {buyer_text}\n'
                               f'Запрос: {request_text}')
                 else:
                     candidates_text = html.escape(build_reply(candidates, intro='')[:1500])

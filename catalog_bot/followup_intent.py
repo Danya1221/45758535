@@ -16,7 +16,10 @@ _HOLD_WORD = re.compile(
     r'\b(?:отложи(?:те|ть|шь)?|заброниру(?:й(?:те)?|ешь|ете)|'
     r'забронировать|брониру(?:й(?:те)?|ешь|ете)|бронировать|'
     r'(?:за)?резервиру(?:й(?:те)?|ешь|ете)|(?:за)?резервировать|'
-    r'бронь|брони|резерв)\b')
+    r'бронь|брони|резерв|закинь(?:те)?|закинуть)\b')
+_OTHER_OBJECT = re.compile(r'\b(?:фото|фотк\w*|картинк\w*|скрин\w*|прайс\w*|прайз\w*|ссылк\w*|видео|деньги|деньгами|оплат\w*)\b')
+_QUANTITY = re.compile(r'(?<!\w)(\d{1,4})\s*(?:шт(?:ук(?:а|и)?)?\.?|штук|единиц(?:а|ы)?)(?!\w)')
+_BARE_QUANTITY = re.compile(r'^\s*(?:отложи(?:те)?|закинь(?:те)?)\s+(\d{1,4})\s*[.!]?\s*$')
 _DISCOUNT_VERB = re.compile(
     r'\b(?:скин(?:ь(?:те)?|ешь|ете|уть)|уступ(?:и(?:те)?|ишь|ите|ить)|'
     r'торг(?:оваться|уемся|уешься|уетесь)?|подешевле|дешевле|'
@@ -52,7 +55,23 @@ def _negated(text: str, match: re.Match) -> bool:
 def _hold_requested(text: str) -> bool:
     if _CANCEL_HOLD.search(text) or _HOLD_STATUS.search(text):
         return False
+    if _OTHER_OBJECT.search(text) and re.search(r'\bзакин(?:ь|ьте|уть)\b', text):
+        return False
     return any(not _negated(text, match) for match in _HOLD_WORD.finditer(text))
+
+
+def hold_quantity(text: str) -> int | None:
+    """Only explicit units count: device model and memory are not quantities."""
+    text = _text(text)
+    if re.search(r'(?:[-−]\s*\d+|\d+\s*[-–—]\s*\d+)\s*(?:шт|штук|единиц)', text):
+        return None
+    bare = _BARE_QUANTITY.fullmatch(text)
+    values = [bare.group(1)] if bare else _QUANTITY.findall(text)
+    if not values:
+        return 1
+    if len(values) != 1 or not 1 <= int(values[0]) <= 1000:
+        return None
+    return int(values[0])
 
 
 def _discount_requested(text: str) -> bool:
@@ -96,6 +115,9 @@ def strip_hold_request(text: str) -> str:
                         r'торг\s+не\s+(?:нужен|надо|нужно)|не\s+(?:нужен|надо|нужно)\s+торг)\b',
                         ' ', normalized)
     normalized = _HOLD_WORD.sub(' ', normalized)
+    normalized = _QUANTITY.sub(' ', normalized)
+    if _BARE_QUANTITY.fullmatch(_text(text)):
+        normalized = ''
     normalized = re.sub(r'\b(?:поставь(?:те)?|поставить|сделай(?:те)?|оформи(?:те)?|'
                         r'можно|можешь|можете|пожалуйста|пжлст|пж|мне|нам|меня|'
                         r'этот|эту|это|его|ее|данный|данную|товар|позицию|вариант)\b', ' ', normalized)
