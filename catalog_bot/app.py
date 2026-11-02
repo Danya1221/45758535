@@ -39,6 +39,7 @@ from .update_state import checkpoint_update_state, restore_channel_updates
 from .message_chunks import split_messages
 from .conversations import ConversationReplies, user_tag
 from .account_roles import prepare_account_roles
+from .chat_cleanup import OwnerChatCleanup, OwnerIncomingMiddleware, OwnerOutgoingMiddleware
 
 log = logging.getLogger(__name__)
 RELEASE = '2026-10-27-separate-accounts'
@@ -143,6 +144,10 @@ def menu():
         [('💸 Наценка', 'markup'), ('🔧 Почему нет ответа', 'why')],
         [('▶️ Включить ответы', 'run'), ('⏸ Пауза', 'pause')],
     ])
+
+
+WELCOME_TEXT = ('Бот находит запросы в выбранных группах и отправляет цены в личку.\n\n'
+                'Выбери действие ниже. Справка: /help')
 
 
 CATALOG_PROMPT = (
@@ -1006,8 +1011,7 @@ class Application:
         async def start(message: Message, state: FSMContext):
             self.cancel_login()
             await state.clear()
-            await message.answer('Бот находит запросы в выбранных группах и отправляет цены в личку.\n\n'
-                                 'Выбери действие ниже. Справка: /help', reply_markup=menu())
+            await message.answer(WELCOME_TEXT, reply_markup=menu())
 
         @dp.message(Command('help'))
         async def help_command(message: Message, state: FSMContext):
@@ -1411,6 +1415,13 @@ async def run(config: Config):
                 path.chmod(0o600)
         bot = Bot(config.bot_token)
         app = Application(config, store, client, bot, price_client=price_client)
+        cleaner = OwnerChatCleanup(store, config.owner_id, bot.id)
+        cleaner.initialize()
+        app.dp.message.outer_middleware(OwnerIncomingMiddleware(cleaner))
+        bot.session.middleware(OwnerOutgoingMiddleware(cleaner))
+
+        async def send_daily_menu():
+            await bot.send_message(config.owner_id, WELCOME_TEXT, reply_markup=menu())
         # Own messages are observed for diagnostics, but monitor/Engine never
         # answer them. This makes self-tests distinguishable from lost updates.
         client.add_event_handler(app.monitor, events.NewMessage())
@@ -1431,7 +1442,8 @@ async def run(config: Config):
         await app.notify('Бот запущен. Проверяю входы для прайса и ответов. Статус: /status.\n'
                          'Ответы с нового аккаунта: /loginqr. Прайс со старого аккаунта сохраняется; при необходимости: /priceloginqr.')
         tasks = [asyncio.create_task(app.dp.start_polling(bot, close_bot_session=False)),
-                 asyncio.create_task(app.account_loop()), asyncio.create_task(app.price_account_loop())]
+                 asyncio.create_task(app.account_loop()), asyncio.create_task(app.price_account_loop()),
+                 asyncio.create_task(cleaner.run(bot, send_daily_menu))]
         if app.price_sync:
             tasks.append(asyncio.create_task(app.price_loop()))
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

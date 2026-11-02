@@ -46,6 +46,8 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_boot_without_authorization_keeps_management_available(self):
         await self.feed('/start')
+        self.assertIn('/help', self.texts()[-1])
+        await self.feed('/help')
         self.assertIn('/login', self.texts()[-1])
         await self.feed('/status')
         self.assertIn('не подключён', self.texts()[-1])
