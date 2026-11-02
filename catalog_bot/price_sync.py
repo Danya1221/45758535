@@ -69,11 +69,8 @@ class PriceSync:
             snapshot = self.collector.add(event.id, event.raw_text or '')
             if snapshot is None:
                 return
-            was_ready = self.store.get('price_ready', True)
-            summary = self.store.apply_price_snapshot(snapshot, 'bot:' + str(self.peer.id))
+            self.store.apply_price_snapshot(snapshot, 'bot:' + str(self.peer.id))
             self.done.set()
-            if summary['baseline'] or summary['added'] or summary['changed'] or summary['removed'] or not was_ready:
-                await self.notify(format_summary(summary))
         except Exception as exc:
             self.failure = str(exc) if isinstance(exc, PriceFeedError) else type(exc).__name__
             self.done.set()

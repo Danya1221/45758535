@@ -59,7 +59,7 @@ class SourceSyncTests(unittest.IsolatedAsyncioTestCase):
         self.client.response = PRICE.replace('85 000', '86 500')
         self.assertTrue(await self.sync.refresh())
         self.assertEqual(str(self.store.products()[0].price), '86500')
-        self.assertIn('Изменились цены: 1', self.notifications[-1])
+        self.assertEqual(self.notifications, [])
 
     async def test_partial_response_preserves_old_price_but_disables_quoting(self):
         self.store.apply_price_snapshot(parse_price_feed(PRICE), 'bot:999')
@@ -67,6 +67,7 @@ class SourceSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.sync.refresh())
         self.assertEqual(str(self.store.products()[0].price), '85000')
         self.assertFalse(self.store.get('price_ready'))
+        self.assertTrue(any('Прайс не обновлён' in notice for notice in self.notifications))
 
     async def test_unchanged_poll_does_not_send_repeated_owner_alert(self):
         self.assertTrue(await self.sync.refresh())

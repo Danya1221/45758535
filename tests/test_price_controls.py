@@ -120,6 +120,7 @@ class PriceControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(labels['price'], '💰 Запросить прайс')
         self.assertIn('uploadprice', labels)
         self.assertIn('price_timer', labels)
+        self.assertTrue({'login', 'loginqr', 'pricelogin', 'priceloginqr'}.isdisjoint(labels))
         await self.callback('price')
         self.assertEqual(self.client.calls, ['/prices'])
         self.assertEqual(len(self.store.products()), 1)

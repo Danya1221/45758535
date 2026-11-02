@@ -137,8 +137,6 @@ def keyboard(rows: list[list[tuple[str, str]]]):
 
 def menu():
     return keyboard([
-        [('👤 Вход для ответов', 'loginqr'), ('💰 Вход для прайса', 'priceloginqr')],
-        [('🔐 Ответы: номер', 'login'), ('🔐 Прайс: номер', 'pricelogin')],
         [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats_all')],
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
@@ -1414,8 +1412,7 @@ async def run(config: Config):
             price_client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
             price_client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
-            ('start', 'Меню'), ('login', 'Ответы: вход по номеру'), ('loginqr', 'Ответы: вход по QR'),
-            ('pricelogin', 'Прайс: вход по номеру'), ('priceloginqr', 'Прайс: вход по QR'),
+            ('start', 'Меню'),
             ('price', 'Запросить прайс у поставщика'), ('uploadprice', 'Загрузить прайс вручную'),
             ('timer', 'Автообновление прайса'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
