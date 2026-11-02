@@ -1419,12 +1419,12 @@ async def run(config: Config):
             price_client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
             price_client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
-            ('start', 'Меню'),
+            ('run', 'Старт ответов'), ('pause', 'Стоп ответов'), ('start', 'Меню'),
             ('price', 'Запросить прайс у поставщика'), ('uploadprice', 'Загрузить прайс вручную'),
             ('timer', 'Автообновление прайса'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
             ('markup', 'Наценка по категориям'),
-            ('test', 'Проверить запрос'), ('run', 'Включить ответы'), ('pause', 'Пауза'),
+            ('test', 'Проверить запрос'),
             ('why', 'Почему нет ответа в группе'),
             ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки')]])
         store.prune()
