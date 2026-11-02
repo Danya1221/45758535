@@ -8,6 +8,7 @@ from typing import Awaitable, Callable
 from .catalog import build_reply, find_products
 from .storage import Store
 from .pricing import price_products
+from .offer_selection import select_offers
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class Engine:
             classification, found = await asyncio.to_thread(find_products, message.text, quoted_products, self.store.get('allow_bare', True))
             if not found:
                 return "sell" if classification == 'sell' else "no_match"
+            found = select_offers(found)
             if self.store.delivery(message.chat_id, message.message_id):
                 return 'duplicate'
             if self.reply_delay_seconds:

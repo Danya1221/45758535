@@ -29,6 +29,7 @@ from .storage import Store
 from .prices import FOOTER, PriceFeedError, parse_price_feed
 from .price_sync import PriceSync, format_summary
 from .pricing import CATEGORIES, MarkupPolicy, MarkupRule, category_for, format_policy, price_products, resolve_category
+from .offer_selection import select_offers
 from .sessions import load_string_session, persist_session
 from .account_login import AccountLogin, LoginError
 from .login_qr import qr_png
@@ -961,6 +962,7 @@ class Application:
             return
         report = await asyncio.to_thread(inspect_request, text, products, self.store.get('allow_bare', True))
         classification, found = report.classification, report.products
+        found = select_offers(found)
         labels = {'buy': 'запрос на покупку', 'bare': 'название товара без «куплю»',
                   'sell': 'предложение продавца', 'uncertain': 'неопределённое сообщение'}
         text_out = f'Тип: {labels[classification]}\nСовпадений: {len(found)}\nЦена для покупателя с настроенной наценкой.\n'
