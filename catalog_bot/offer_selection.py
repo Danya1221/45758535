@@ -2,34 +2,38 @@
 from __future__ import annotations
 
 import unicodedata
+import re
 
 from .catalog import Product
 
 
-def select_offers(products: list[Product]) -> list[Product]:
-    """Keep the cheapest offer and, when available, the cheapest Kazakhstan offer.
+_SAMSUNG_PHONE = re.compile(r'\bgalaxy\s+(?:s\d+|a\d+|z\s*(?:flip|fold))', re.IGNORECASE)
+_SAMSUNG_PHONE_CODE = re.compile(r'(?<!\w)SM-[SAF]\d{3}[A-Z0-9]*(?:/[A-Z0-9]+)?(?!\w)', re.IGNORECASE)
 
-    Group only identical full names and SKUs; manufacturer codes, SIM details,
-    condition and all other characteristics remain part of the identity.
-    Unknown prices are retained because they cannot safely be compared.
+
+def _offer_name(name: str) -> str:
+    # Supplier model codes on Samsung phones distinguish regional offers. They
+    # are hidden in the response, so they must not create duplicate visible rows.
+    # Keep other codes: e.g. laptop model codes can distinguish different goods.
+    if _SAMSUNG_PHONE.search(name):
+        name = _SAMSUNG_PHONE_CODE.sub('', name)
+    return ' '.join(unicodedata.normalize('NFKC', name).casefold().split())
+
+
+def select_offers(products: list[Product]) -> list[Product]:
+    """Keep one lowest-priced offer per product configuration.
+
+    Keep explicit SIM details, condition and other specifications distinct.
+    Prefer priced offers; if none has a price, retain one unpriced offer.
     """
     groups: dict[tuple[str, str, int], list[tuple[int, Product]]] = {}
-    unknown: list[tuple[int, Product]] = []
     for index, product in enumerate(products):
-        if product.price is None:
-            unknown.append((index, product))
-            continue
-        name = ' '.join(unicodedata.normalize('NFKC', product.name).casefold().split())
+        name = _offer_name(product.name)
         sku = unicodedata.normalize('NFKC', product.sku).casefold().strip()
         groups.setdefault((name, sku, product.min_qty), []).append((index, product))
 
-    chosen = list(unknown)
+    chosen = []
     for offers in groups.values():
-        cheapest = min(offers, key=lambda item: (item[1].price, item[0]))
-        chosen.append(cheapest)
-        kz = [item for item in offers if '🇰🇿' in (item[1].country, item[1].price_country)]
-        if kz:
-            kz_cheapest = min(kz, key=lambda item: (item[1].price, item[0]))
-            if kz_cheapest[0] != cheapest[0]:
-                chosen.append(kz_cheapest)
+        priced = [item for item in offers if item[1].price is not None]
+        chosen.append(min(priced, key=lambda item: (item[1].price, item[0])) if priced else offers[0])
     return [product for _, product in sorted(chosen, key=lambda item: item[0])]

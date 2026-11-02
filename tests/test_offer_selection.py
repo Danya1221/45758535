@@ -19,27 +19,38 @@ def offer(region, price, **kwargs):
 
 
 class OfferSelectionTests(unittest.TestCase):
-    def test_cheapest_plus_cheapest_kazakhstan(self):
+    def test_cheapest_without_extra_kazakhstan_offer(self):
         ae, cl, py, kz, kz_expensive = [offer(*v) for v in [
             ('🇦🇪', 112700), ('🇨🇱', 113500), ('🇵🇾', 111600), ('🇰🇿', 115000), ('🇰🇿', 116000)]]
-        self.assertEqual(select_offers([ae, cl, py, kz, kz_expensive]), [py, kz])
+        self.assertEqual(select_offers([ae, cl, py, kz, kz_expensive]), [py])
 
     def test_kazakhstan_cheapest_is_only_shown_once(self):
         kz, ae = offer('🇰🇿', 100), offer('🇦🇪', 120)
         self.assertEqual(select_offers([kz, ae]), [kz])
 
-    def test_different_configurations_and_identifiers_are_never_merged(self):
+    def test_different_configurations_and_skus_are_never_merged(self):
         base = offer('🇦🇪', 100)
         differences = [replace(offer('🇵🇾', 90), name=NAME.replace('White', 'Black')),
                        replace(offer('🇵🇾', 90), name=NAME.replace('1TB', '512')),
                        replace(offer('🇵🇾', 90), name=NAME + ' eSIM'),
-                       replace(offer('🇵🇾', 90), name=NAME.replace('S948B', 'S9480')),
                        replace(offer('🇵🇾', 90), sku='other-sku')]
         self.assertEqual(select_offers([base, *differences]), [base, *differences])
 
-    def test_unknown_prices_are_not_assumed_more_expensive(self):
+    def test_priced_offer_is_used_when_the_other_has_no_price(self):
         known, unknown = offer('🇵🇾', 100), offer('🇦🇪', None)
-        self.assertEqual(select_offers([known, unknown]), [known, unknown])
+        self.assertEqual(select_offers([known, unknown]), [known])
+        self.assertEqual(select_offers([unknown]), [unknown])
+
+    def test_samsung_region_codes_do_not_duplicate_the_visible_offer(self):
+        za = Product('Galaxy S26 12/256 Cobalt Violet SM-S942B/DS', Decimal('57300'), None, country='🇿🇦')
+        kz = Product('Galaxy S26 12/256 Cobalt Violet SM-S942B/DS', Decimal('58200'), None, country='🇰🇿')
+        hk = Product('Galaxy S26 12/256 Cobalt Violet SM-S9420', Decimal('56700'), None, country='🇭🇰')
+        self.assertEqual(select_offers([za, kz, hk]), [hk])
+
+    def test_laptop_model_codes_still_keep_distinct_products(self):
+        a = Product('Galaxy Book 6 NP760VJG - KG1IN', Decimal('116000'))
+        b = Product('Galaxy Book 6 NP760VJG - KG2IN', Decimal('121500'))
+        self.assertEqual(select_offers([a, b]), [a, b])
 
 
 class OfferEngineTests(unittest.IsolatedAsyncioTestCase):
@@ -68,11 +79,24 @@ class OfferEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.engine.process(message), 'sent')
         text = self.sent[0]
         self.assertIn('🇵🇾 — 111 600 ₽', text)
-        self.assertIn('🇰🇿 — 115 000 ₽', text)
+        self.assertNotIn('🇰🇿', text)
         self.assertNotIn('🇦🇪', text)
         self.assertNotIn('🇨🇱', text)
         quote = self.store.quote_for_reply(77, 55, 900, now=1000)
-        self.assertEqual({p.country for p in quote['products']}, {'🇵🇾', '🇰🇿'})
+        self.assertEqual({p.country for p in quote['products']}, {'🇵🇾'})
+
+    async def test_reported_three_samsung_offers_only_sends_cheapest(self):
+        za = Product('Galaxy S26 12/256 Cobalt Violet SM-S942B/DS', Decimal('57300'), None, country='🇿🇦')
+        kz = Product('Galaxy S26 12/256 Cobalt Violet SM-S942B/DS', Decimal('58200'), None, country='🇰🇿')
+        hk = Product('Galaxy S26 12/256 Cobalt Violet SM-S9420', Decimal('56700'), None, country='🇭🇰')
+        self.store.replace_products([za, kz, hk])
+        message = Incoming(-100, 1, 55, 'Samsung Galaxy S26 256 Cobalt Violet', 1000)
+        self.assertEqual(await self.engine.process(message), 'sent')
+        self.assertIn('🇭🇰 — 56 700 ₽', self.sent[0])
+        self.assertNotIn('🇿🇦', self.sent[0])
+        self.assertNotIn('🇰🇿', self.sent[0])
+        quote = self.store.quote_for_reply(77, 55, 900, now=1000)
+        self.assertEqual([p.country for p in quote['products']], ['🇭🇰'])
 
     async def test_region_explicitly_requested_is_not_replaced_by_another(self):
         self.store.replace_products([offer('🇦🇪', 112700), offer('🇵🇾', 111600), offer('🇰🇿', 115000)])
