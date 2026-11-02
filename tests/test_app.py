@@ -81,6 +81,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.transport.calls, [])
         await self.feed('/start')
         self.assertIn('Бот находит запросы', self.texts()[-1])
+        self.assertIn('/help', self.texts()[-1])
+        self.assertNotIn('/login', self.texts()[-1])
+        await self.feed('/help')
+        self.assertIn('/loginqr', self.texts()[-1])
+        self.assertIn('/chats', self.texts()[-1])
 
     async def test_import_test_and_run_flow(self):
         await self.feed('/catalog')

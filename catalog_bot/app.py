@@ -1002,14 +1002,21 @@ class Application:
         async def login_password(message: Message, state: FSMContext):
             await self.login_input(message, state, 'password')
 
-        @dp.message(Command('start', 'help'))
+        @dp.message(Command('start'))
         async def start(message: Message, state: FSMContext):
+            self.cancel_login()
+            await state.clear()
+            await message.answer('Бот находит запросы в выбранных группах и отправляет цены в личку.\n\n'
+                                 'Выбери действие ниже. Справка: /help', reply_markup=menu())
+
+        @dp.message(Command('help'))
+        async def help_command(message: Message, state: FSMContext):
             self.cancel_login()
             await state.clear()
             await message.answer('Бот находит запросы в выбранных группах и отправляет цены авторам в личку.\n\n'
                                  'Аккаунт для ответов: /loginqr — QR или /login — номер, код и пароль 2FA.\n'
                                  'Аккаунт с доступом к прайсу: /priceloginqr — QR или /pricelogin — номер.\n'
-                                 'При переносе старый вход сохраняется для прайса; для ответов войди новым аккаунтом.\n\n'
+                                 '\n'
                                  '1. /price — запросить прайс у поставщика; /uploadprice — загрузить вручную.\n'
                                  '/timer — автообновление; /catalog — свой список.\n'
                                  '2. /markup — настроить наценку.\n3. /chats — выбрать группы.\n'
