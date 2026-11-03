@@ -63,6 +63,24 @@ class ScheduleTests(unittest.TestCase):
         self.assertIsNone(self.schedule.remaining())
         self.assertIsNone(self.schedule.next_at)
 
+    def test_auto_requests_are_limited_to_moscow_work_hours(self):
+        def moment(hour, minute=0, day=3):
+            return datetime(2026, 11, day, hour, minute, tzinfo=timezone.utc).timestamp() - 3 * 3600
+        self.now = moment(9, 59)
+        self.schedule.mark_due()
+        self.assertEqual(self.schedule.auto_remaining(), 60)
+        self.now = moment(10)
+        self.assertEqual(self.schedule.auto_remaining(), 0)
+        self.now = moment(19, 59)
+        self.schedule.mark_due()
+        self.assertEqual(self.schedule.auto_remaining(), 0)
+        self.assertEqual(self.schedule.auto_remaining(120), 14 * 3600 + 60)
+        self.now = moment(20)
+        self.schedule.mark_due()
+        self.assertEqual(self.schedule.auto_remaining(), 14 * 3600)
+        self.now = moment(2, day=4)
+        self.assertEqual(self.schedule.auto_remaining(), 8 * 3600)
+
 
 class PriceControlTests(unittest.IsolatedAsyncioTestCase):
     feed = controller_helpers.ControllerTests.feed
@@ -83,7 +101,7 @@ class PriceControlTests(unittest.IsolatedAsyncioTestCase):
         self.app.price_sync.timeout = .03
         self.app.auth.ready = True
         self.app.account_available.set()
-        self.now = 1000
+        self.now = datetime(2026, 11, 3, 8, tzinfo=timezone.utc).timestamp()
         self.app.price_schedule.clock = lambda: self.now
         self.app.price_schedule.mark_due()
         self.update_id = 0
@@ -182,6 +200,26 @@ class PriceControlTests(unittest.IsolatedAsyncioTestCase):
         await self.wait_calls(3)
         self.assertEqual(self.client.calls, ['/prices'] * 3)
 
+    async def test_automatic_request_waits_until_ten_moscow(self):
+        self.now = datetime(2026, 11, 3, 6, 59, tzinfo=timezone.utc).timestamp()
+        self.app.price_schedule.mark_due()
+        self.start_loop()
+        await asyncio.sleep(.02)
+        self.assertEqual(self.client.calls, [])
+        self.now += 60
+        self.app.refresh_requested.set()
+        await self.wait_calls(1)
+        self.assertEqual(self.client.calls, ['/prices'])
+
+    async def test_manual_request_works_after_hours(self):
+        self.now = datetime(2026, 11, 3, 18, tzinfo=timezone.utc).timestamp()
+        await self.feed('/price')
+        self.assertEqual(self.client.calls, ['/prices'])
+        self.assertTrue(self.store.get('price_ready'))
+        await self.feed('/status')
+        self.assertIn('04.11 10:00:00 МСК', self.texts()[-1])
+        self.assertIn('13 ч 00 мин', self.texts()[-1])
+
     async def test_timer_respects_telegram_wait_before_requesting_source(self):
         self.app.price_sync.retry_after = time.monotonic() + 3600
         self.start_loop()
@@ -218,6 +256,9 @@ class PriceControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.store.products()), 1)
         self.assertFalse(self.store.get('price_ready'))
         self.assertEqual(self.app.price_schedule.remaining(), 600)
+        self.assertIn('Не удалось обновить прайс', self.texts()[-1])
+        await self.feed('/status')
+        self.assertIn('Последняя ошибка прайса', self.texts()[-1])
 
     async def test_invalid_and_unauthorized_timer_changes_leave_rule_unchanged(self):
         await self.feed('/timer 15')

@@ -329,9 +329,8 @@ class Application:
         while True:
             await self.price_account_available.wait()
             self.refresh_requested.clear()
-            delay = self.price_schedule.remaining()
+            delay = self.price_schedule.auto_remaining(self.price_sync.retry_after - time.monotonic())
             if delay is not None:
-                delay = max(delay, self.price_sync.retry_after - time.monotonic())
                 if delay <= 0:
                     if await self.refresh_source_price() is not None:
                         continue
@@ -366,8 +365,15 @@ class Application:
             await message.answer('Прайс уже запрашивается. Дождись результата.', reply_markup=menu())
             return
         await message.answer(f'Запрашиваю прайс у {self.config.price_bot}…')
-        if await self.refresh_source_price():
+        result = await self.refresh_source_price()
+        if result:
             await message.answer('Прайс обновлён. Изменения цен: /changes.', reply_markup=menu())
+        elif result is False:
+            detail = self.store.get('price_last_error', '') or 'Прайс не получен.'
+            condition = ('Ответы по ценам приостановлены до обновления.' if not self.store.get('price_ready', True)
+                         else 'Сохранённый прайс пока доступен для ответов.')
+            await message.answer(f'Не удалось обновить прайс: {detail}\nПредыдущий сохранён. {condition}',
+                                 parse_mode=None, reply_markup=menu())
 
     def price_timer_status(self):
         if not self.price_sync:
@@ -376,15 +382,17 @@ class Application:
             return 'Автообновление: выключено. Запросить сейчас: /price.'
         interval = self.price_schedule.interval
         period = f'{interval // 60} мин' if interval % 60 == 0 else f'{interval} сек'
-        text = f'Автообновление: каждые {period}.'
+        text = f'Автообновление: каждые {period}, с 10:00 до 20:00 МСК.'
         if not self.price_account_available.is_set():
             return text + '\nСледующий запрос: после подключения аккаунта прайса.'
         if self.price_source_busy():
             return text + '\nСейчас загружаю прайс.'
-        remaining = max(self.price_schedule.remaining() or 0, self.price_sync.retry_after - time.monotonic())
+        remaining = self.price_schedule.auto_remaining(self.price_sync.retry_after - time.monotonic()) or 0
         seconds = max(0, int(remaining + .999))
-        stamp = datetime.fromtimestamp(self.price_schedule.clock() + remaining, ZoneInfo('Europe/Moscow')).strftime('%H:%M:%S МСК')
-        return text + f'\nСледующий запрос: {stamp}, через {seconds // 60:02d}:{seconds % 60:02d}.'
+        stamp = datetime.fromtimestamp(self.price_schedule.clock() + remaining, ZoneInfo('Europe/Moscow')).strftime('%d.%m %H:%M:%S МСК')
+        countdown = (f'{seconds // 3600} ч {(seconds // 60) % 60:02d} мин' if seconds >= 3600
+                     else f'{seconds // 60:02d}:{seconds % 60:02d}')
+        return text + f'\nСледующий запрос: {stamp}, через {countdown}.'
 
     async def show_price_timer(self, message: Message):
         stamp = self.store.get('price_updated_at')
@@ -811,6 +819,8 @@ class Application:
 
     def status(self) -> str:
         products = self.store.products()
+        price_error = self.store.get('price_last_error', '')
+        price_error_line = f'Последняя ошибка прайса: {price_error[:300]}\n' if price_error else ''
         price_account = ''
         if self.separate_accounts:
             price_name = self.store.get('price_account_name') or 'подключён'
@@ -824,6 +834,7 @@ class Application:
                 f"Ответы: {'включены' if self.store.get('active', False) else 'пауза'}\n"
                 f'Позиций: {len(products)}, подходят для предложения: {sum(p.eligible for p in products)}\n'
                 f"Прайс: {'готов к использованию' if self.store.get('price_ready', True) else 'требует успешного обновления'}\n"
+                f'{price_error_line}'
                 f"Источник: {self.config.price_bot or 'ручная загрузка'}\n"
                 f'{self.price_timer_status()}\n'
                 f'Выбрано групп: {len(self.store.chats())}\n'

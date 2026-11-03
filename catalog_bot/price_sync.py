@@ -85,7 +85,7 @@ class PriceSync:
         if self.lock.locked():
             return False
         if time.monotonic() < self.retry_after:
-            await self.notify(f'Telegram ограничил запросы прайса. Повтор возможен через {int(self.retry_after - time.monotonic()) + 1} секунд.')
+            self.store.set('price_last_error', f'Telegram ограничил запросы. Повтор через {int(self.retry_after - time.monotonic()) + 1} сек.')
             return False
         async with self.lock:
             self.done.clear()
@@ -117,6 +117,7 @@ class PriceSync:
                 await asyncio.wait_for(self.done.wait(), timeout=self.timeout)
                 if self.failure:
                     raise PriceFeedError(self.failure)
+                self.store.set('price_last_error', '')
                 return True
             except asyncio.CancelledError:
                 raise
@@ -126,7 +127,7 @@ class PriceSync:
                     self.retry_after = time.monotonic() + exc.seconds
                 detail = (self.collector.error or 'Не получен полный прайс') if isinstance(exc, asyncio.TimeoutError) else (
                     str(exc) if isinstance(exc, PriceFeedError) else type(exc).__name__)
-                await self.notify('Прайс не обновлён: ' + detail + '\nПредыдущая версия сохранена. Ответы по ценам временно приостановлены до успешного обновления.')
+                self.store.set('price_last_error', detail[:300])
                 return False
             finally:
                 self.collector.active = False

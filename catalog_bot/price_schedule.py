@@ -1,5 +1,10 @@
 """Persistent price polling preferences and the current runtime deadline."""
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+
+MOSCOW = ZoneInfo('Europe/Moscow')
 
 
 class PriceSchedule:
@@ -36,3 +41,18 @@ class PriceSchedule:
         if not self.enabled:
             return None
         return max(0, (self.next_at if self.next_at is not None else self.clock()) - self.clock())
+
+    def auto_remaining(self, retry_after=0):
+        """Next automatic request is within 10:00–20:00 Moscow time."""
+        if not self.enabled:
+            return None
+        now = self.clock()
+        due = max(now, self.next_at if self.next_at is not None else now, now + max(0, retry_after))
+        local = datetime.fromtimestamp(due, MOSCOW)
+        day_start = local.replace(hour=10, minute=0, second=0, microsecond=0)
+        day_end = local.replace(hour=20, minute=0, second=0, microsecond=0)
+        if local < day_start:
+            due = day_start.timestamp()
+        elif local >= day_end:
+            due = (day_start + timedelta(days=1)).timestamp()
+        return max(0, due - now)

@@ -67,7 +67,18 @@ class SourceSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.sync.refresh())
         self.assertEqual(str(self.store.products()[0].price), '85000')
         self.assertFalse(self.store.get('price_ready'))
-        self.assertTrue(any('Прайс не обновлён' in notice for notice in self.notifications))
+        self.assertEqual(self.notifications, [])
+        self.assertTrue(self.store.get('price_last_error'))
+
+    async def test_repeated_failed_refresh_is_silent_and_success_clears_error(self):
+        self.client.response = PRICE.replace('1 товаров', '425 товаров')
+        self.assertFalse(await self.sync.refresh())
+        self.assertFalse(await self.sync.refresh())
+        self.assertEqual(self.notifications, [])
+        self.assertTrue(self.store.get('price_last_error'))
+        self.client.response = PRICE
+        self.assertTrue(await self.sync.refresh())
+        self.assertEqual(self.store.get('price_last_error'), '')
 
     async def test_unchanged_poll_does_not_send_repeated_owner_alert(self):
         self.assertTrue(await self.sync.refresh())
