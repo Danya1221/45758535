@@ -210,6 +210,18 @@ class MonitorFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.send_message.await_count, 1)
         self.assertIsInstance(self.client.send_message.await_args.args[0], types.InputPeerUser)
 
+    async def test_peer_flood_pauses_without_retry_and_explains_spambot(self):
+        self.client.send_message.side_effect = errors.PeerFloodError(None)
+        event = self.update()
+        await self.client._dispatch_update(event)
+        self.assertFalse(self.store.get('active'))
+        self.assertEqual(self.store.delivery(-123, 28)['detail'], 'PeerFloodError')
+        self.assertEqual(self.client.send_message.await_count, 1)
+        notices = [call.text for call in self.transport.calls if call.__api_method__ == 'sendMessage']
+        self.assertTrue(any('@SpamBot' in text and 'После снятия ограничения' in text for text in notices))
+        await self.client._dispatch_update(event)
+        self.assertEqual(self.client.send_message.await_count, 1)
+
     def many_offers(self):
         products = [Product('Galaxy S25 Ultra 12/512 Black SM-S938B/DS', Decimal(69800 + index), None,
                             sku=f'OFFER{index}', country='🇨🇱') for index in range(120)]

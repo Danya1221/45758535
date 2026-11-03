@@ -762,10 +762,16 @@ class Application:
                 detail = delivery['detail'] if delivery else result
                 record(result, detail)
                 if not self.store.get('active', False):
-                    await self.notify(f'⏸ Ответы приостановлены. Покупатель: {user_tag(sender)}.\n'
-                                      f'Результат: {result}; {html.escape(detail)}.\n'
-                                      'Проверь /tail. Для возобновления: /run. Повторной отправки этого сообщения не будет.',
-                                      parse_mode='HTML')
+                    if detail.split(';')[-1] == 'PeerFloodError':
+                        await self.notify(f'⏸ Telegram ограничил отправку сообщений. Покупатель: {user_tag(sender)}.\n'
+                                          'Ответы на паузе, повторной отправки не будет. Проверь ограничение в @SpamBot '
+                                          'с аккаунта, который отправляет ответы. После снятия ограничения можно включить /run.',
+                                          parse_mode='HTML')
+                    else:
+                        await self.notify(f'⏸ Ответы приостановлены. Покупатель: {user_tag(sender)}.\n'
+                                          f'Результат: {result}; {html.escape(detail)}.\n'
+                                          'Проверь /tail. Для возобновления: /run. Повторной отправки этого сообщения не будет.',
+                                          parse_mode='HTML')
                 else:
                     await self.notify(f'Не удалось отправить цену в личку: {user_tag(sender)}.\n'
                                       f'Причина: {html.escape(detail)}.\n'
