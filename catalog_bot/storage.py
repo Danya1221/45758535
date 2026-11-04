@@ -8,7 +8,7 @@ import unicodedata
 from decimal import Decimal
 from pathlib import Path
 
-from .catalog import Product, product_key
+from .catalog import Product, product_key, build_reply
 from .prices import PriceFeedError
 from .pricing import MarkupPolicy
 
@@ -86,7 +86,22 @@ class Store:
                 generation INTEGER NOT NULL, product_id INTEGER NOT NULL, product_name TEXT NOT NULL,
                 quantity INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1, created REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS hold_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL, sender_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL, quote_id INTEGER NOT NULL,
+                username TEXT NOT NULL DEFAULT '', buyer_name TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL, product_text TEXT NOT NULL DEFAULT '', quoted_price TEXT,
+                buyer_text TEXT NOT NULL DEFAULT '', quantity INTEGER,
+                stock_status TEXT NOT NULL DEFAULT '', reservation_id INTEGER,
+                created REAL NOT NULL,
+                UNIQUE(account_id, sender_id, message_id)
+            );
+            CREATE INDEX IF NOT EXISTS hold_requests_created ON hold_requests(created DESC, id DESC);
         """)
+        hold_columns = {r[1] for r in self.db.execute('PRAGMA table_info(hold_requests)')}
+        if 'quoted_price' not in hold_columns:
+            self.db.execute('ALTER TABLE hold_requests ADD COLUMN quoted_price TEXT')
         quote_columns = {r[1] for r in self.db.execute('PRAGMA table_info(quotes)')}
         if 'catalog_generation' not in quote_columns:
             self.db.execute('ALTER TABLE quotes ADD COLUMN catalog_generation INTEGER')
@@ -441,7 +456,8 @@ class Store:
             self.db.execute('ROLLBACK')
             raise
 
-    def reserve_stock_followup(self, account_id, sender_id, message_id, quote_id, product, quantity, now):
+    def reserve_stock_followup(self, account_id, sender_id, message_id, quote_id, product, quantity, now,
+                               *, username='', buyer_name='', buyer_text=''):
         """Record the request and inventory change together, so replay cannot deduct twice."""
         self.db.execute('BEGIN IMMEDIATE')
         try:
@@ -493,11 +509,45 @@ class Store:
                                                         item['id'], product.name, quantity, now))
                     result = {'status': 'reserved', 'quantity': quantity, 'remaining': item['stock'] - quantity,
                               'reservation_id': reserved.lastrowid}
+            if result['status'] != 'already':
+                self.db.execute('''INSERT INTO hold_requests
+                    (account_id,sender_id,message_id,quote_id,username,buyer_name,kind,product_text,quoted_price,
+                     buyer_text,quantity,stock_status,reservation_id,created)
+                    VALUES (?,?,?,?,?,?,'hold',?,?,?,?,?,?,?)''',
+                    (account_id, sender_id, message_id, quote_id, username[:32], buyer_name[:160],
+                     build_reply([product], intro='')[:500], str(product.price) if product.price is not None else None,
+                     buyer_text[:500], quantity,
+                     result['status'], result.get('reservation_id'), now))
             self.db.execute('COMMIT')
             return result
         except BaseException:
             self.db.execute('ROLLBACK')
             raise
+
+    def reserve_clarification_followup(self, account_id, sender_id, message_id, quote_id, now,
+                                       *, username='', buyer_name='', buyer_text=''):
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            if not self.reserve_followup(account_id, sender_id, message_id, quote_id, 'clarify', now=now):
+                self.db.execute('COMMIT')
+                return False
+            self.db.execute('''INSERT INTO hold_requests
+                (account_id,sender_id,message_id,quote_id,username,buyer_name,kind,buyer_text,created)
+                VALUES (?,?,?,?,?,?,'clarify',?,?)''',
+                (account_id, sender_id, message_id, quote_id, username[:32], buyer_name[:160], buyer_text[:500], now))
+            self.db.execute('COMMIT')
+            return True
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    def hold_requests(self, *, limit=5, offset=0):
+        return [dict(row) for row in self.db.execute('''SELECT h.*, r.active AS reservation_active
+            FROM hold_requests AS h LEFT JOIN stock_reservations AS r ON r.id=h.reservation_id
+            ORDER BY h.created DESC, h.id DESC LIMIT ? OFFSET ?''', (limit, offset))]
+
+    def hold_request_count(self):
+        return self.db.execute('SELECT COUNT(*) FROM hold_requests').fetchone()[0]
 
     def stock_reservations(self):
         return [dict(row) for row in self.db.execute('SELECT * FROM stock_reservations WHERE active=1 ORDER BY id DESC LIMIT 100')]

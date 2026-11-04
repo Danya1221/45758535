@@ -87,9 +87,14 @@ class ConversationReplies:
             if kind is None:
                 return 'ignored'
             reservation = None
+            username = getattr(sender, 'username', None) or ''
+            username = username if isinstance(username, str) else ''
+            name_parts = (getattr(sender, 'first_name', None), getattr(sender, 'last_name', None))
+            buyer_name = ' '.join(part for part in name_parts if isinstance(part, str) and part)
             if kind == 'hold':
                 reservation = self.store.reserve_stock_followup(account_id, message.sender_id, message.message_id,
-                    quote['quote_id'], selected, hold_quantity(message.text), now)
+                    quote['quote_id'], selected, hold_quantity(message.text), now,
+                    username=username, buyer_name=buyer_name, buyer_text=message.text)
                 if reservation['status'] == 'duplicate':
                     return 'duplicate'
                 if reservation['status'] in {'duplicate_hold', 'already'}:
@@ -97,8 +102,8 @@ class ConversationReplies:
                     if reservation['status'] == 'already':
                         self.store.finish_hold(account_id, message.sender_id, quote['quote_id'], [selected], 'sent', 'already_reserved')
                     return 'hold'
-            elif not self.store.reserve_followup(account_id, message.sender_id, message.message_id,
-                                                 quote['quote_id'], kind, now=now):
+            elif not self.store.reserve_clarification_followup(account_id, message.sender_id, message.message_id,
+                    quote['quote_id'], now, username=username, buyer_name=buyer_name, buyer_text=message.text):
                 return 'duplicate'
             if kind in {'hold', 'clarify'}:
                 holds = [selected] if kind == 'hold' else []

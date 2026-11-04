@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
@@ -145,7 +146,7 @@ def menu():
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup'), ('🔧 Почему нет ответа', 'why')],
-        [('🚫 Исключения', 'exclude:list:0')],
+        [('📌 Отложки', 'holds:0'), ('🚫 Исключения', 'exclude:list:0')],
         [('▶️ Включить ответы', 'run'), ('⏸ Пауза', 'pause')],
     ])
 
@@ -984,6 +985,45 @@ class Application:
             'Категории:\n' + categories,
             parse_mode=None, reply_markup=menu())
 
+    async def show_holds(self, message: Message, page: int = 0):
+        count = self.store.hold_request_count()
+        per_page = 3
+        pages = max(1, (count + per_page - 1) // per_page)
+        page = max(0, min(page, pages - 1))
+        rows = self.store.hold_requests(limit=per_page, offset=page * per_page)
+        lines = [f'📌 Отложки: {count} · {page + 1}/{pages}']
+        if not rows:
+            lines.append('Пока нет новых просьб отложить.')
+        for row in rows:
+            buyer = user_tag(SimpleNamespace(id=row['sender_id'], username=row['username'],
+                                             first_name=row['buyer_name'][:50], last_name=None))
+            stamp = datetime.fromtimestamp(row['created'], ZoneInfo('Europe/Moscow')).strftime('%d.%m %H:%M МСК')
+            lines.append(f'\n{buyer} · {stamp}')
+            if row['kind'] == 'clarify':
+                lines.append('Товар и цену нужно уточнить.')
+                lines.append('Сообщение: ' + html.escape(row['buyer_text'][:180]))
+                continue
+            offer = row['product_text']
+            name, separator, price = offer.rpartition(' — ')
+            if row['quoted_price'] is not None and separator and len(offer) > 200:
+                offer = name[:160] + '… — ' + price
+            elif row['quoted_price'] is None:
+                offer = offer[:180] + ('…' if len(offer) > 180 else '') + ' — цена не указана'
+            lines.append(html.escape(offer))
+            if row['quantity'] is not None:
+                lines.append(f"Количество: {row['quantity']} шт.")
+            if row['stock_status'] == 'reserved':
+                lines.append('При отложке списано из остатков.' if row['reservation_active'] else 'Резерв снят.')
+            else:
+                lines.append('Остаток не списан.')
+        nav = []
+        if page:
+            nav.append(('⬅️', f'holds:{page - 1}'))
+        if page + 1 < pages:
+            nav.append(('➡️', f'holds:{page + 1}'))
+        buttons = ([nav] if nav else []) + [[('↩️ Меню', 'home')]]
+        await message.answer('\n'.join(lines), parse_mode='HTML', reply_markup=keyboard(buttons))
+
     async def show_exclusions(self, message: Message, page: int = 0):
         users = self.store.excluded_users()
         pages = max(1, (len(users) + 7) // 8)
@@ -1312,6 +1352,11 @@ class Application:
             for chunk in split_messages('\n'.join(lines)):
                 await message.answer(chunk)
 
+        @dp.message(Command('holds'))
+        async def holds_command(message: Message, state: FSMContext):
+            await state.clear()
+            await self.show_holds(message)
+
         @dp.message(Command('release'))
         async def release(message: Message):
             parts = (message.text or '').split()
@@ -1385,6 +1430,13 @@ class Application:
                 self.cancel_login()
                 await state.clear()
                 await message.answer('Выбери действие:', reply_markup=menu())
+            elif action.startswith('holds:'):
+                try:
+                    page = int(action.split(':', 1)[1])
+                except ValueError:
+                    return
+                await state.clear()
+                await self.show_holds(message, page)
             elif action == 'exclude:add':
                 await state.set_state(Inputs.exclusion)
                 await message.answer('Пришли @username человека или перешли его сообщение. Отмена: /cancel.')
@@ -1581,7 +1633,7 @@ async def run(config: Config):
             ('test', 'Проверить запрос'),
             ('why', 'Почему нет ответа в группе'),
             ('status', 'Статус'), ('stock', 'Скачать текущий список'), ('tail', 'Последние отправки'),
-            ('exclude', 'Исключения')]])
+            ('exclude', 'Исключения'), ('holds', 'Отложки')]])
         store.prune()
         await app.notify('Бот запущен. Проверяю входы для прайса и ответов. Статус: /status.\n'
                          'Ответы с нового аккаунта: /loginqr. Прайс со старого аккаунта сохраняется; при необходимости: /priceloginqr.')
