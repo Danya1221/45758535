@@ -30,6 +30,7 @@ from .engine import Engine, Incoming, SendFailure
 from .storage import Store
 from .prices import FOOTER, PriceFeedError, parse_price_feed
 from .price_sync import PriceSync, format_summary
+from .supernova_sync import SupernovaSync
 from .pricing import CATEGORIES, MarkupPolicy, MarkupRule, category_for, format_policy, price_products, resolve_category
 from .offer_selection import select_offers
 from .sessions import load_string_session, persist_session
@@ -203,6 +204,7 @@ class Application:
                                                  max_per_minute=config.max_per_minute)
         self.price_sync = PriceSync(store, self.price_client, config.price_bot, self.notify, request_text=config.price_request,
                                     button_text=config.price_button, interval=self.price_schedule.interval) if config.price_bot else None
+        self.supernova_sync = SupernovaSync(store, self.price_client)
         if self.price_sync:
             store.set('price_ready', False)
         self.register_handlers()
@@ -828,6 +830,9 @@ class Application:
         products = self.store.products()
         price_error = self.store.get('price_last_error', '')
         price_error_line = f'Последняя ошибка прайса: {price_error[:300]}\n' if price_error else ''
+        supernova_time = self.store.get('supernova_updated_at', 0)
+        supernova_text = ('не получен' if not supernova_time else
+                          'активен' if time.time() - supernova_time < 600 else 'ожидает свежий Excel')
         price_account = ''
         if self.separate_accounts:
             price_name = self.store.get('price_account_name') or 'подключён'
@@ -843,6 +848,7 @@ class Application:
                 f"Прайс: {'готов к использованию' if self.store.get('price_ready', True) else 'требует успешного обновления'}\n"
                 f'{price_error_line}'
                 f"Источник: {self.config.price_bot or 'ручная загрузка'}\n"
+                f'Supernova: {supernova_text}. Excel действует 10 минут.\n'
                 f'{self.price_timer_status()}\n'
                 f'Выбрано групп: {len(self.store.chats())}\n'
                 + self.monitor_status() + '\n' +
@@ -857,10 +863,10 @@ class Application:
     async def activate(self, message: Message):
         if not await self.require_account(message):
             return
-        if not any(p.eligible for p in self.store.products()):
-            await message.answer('Сначала запроси прайс /price, загрузи вручную /uploadprice или добавь список /catalog.')
-        elif not self.store.get('price_ready', True):
+        if not self.store.quotable_products() and not self.store.get('price_ready', True):
             await message.answer('Дождись успешного обновления прайса: /refresh. Статус: /status')
+        elif not any(p.eligible for p in self.store.quotable_products()):
+            await message.answer('Сначала запроси прайс /price, загрузи вручную /uploadprice или добавь список /catalog.')
         elif not self.store.chats():
             await message.answer('Сначала выбери группы: /chats')
         elif not self.client.is_connected():
@@ -1081,7 +1087,7 @@ class Application:
         await self.show_exclusions(message)
 
     async def show_test(self, message: Message, text: str):
-        products = price_products(self.store.products(), self.store.markup_policy())
+        products = price_products(self.store.quotable_products(), self.store.markup_policy())
         if not products:
             await message.answer('Сначала загрузи список: /catalog')
             return
@@ -1621,6 +1627,7 @@ async def run(config: Config):
         # answer them. This makes self-tests distinguishable from lost updates.
         client.add_event_handler(app.monitor, events.NewMessage())
         client.add_event_handler(app.private_reply, events.NewMessage(incoming=True))
+        price_client.add_event_handler(app.supernova_sync.receive, events.NewMessage(incoming=True))
         if app.price_sync:
             price_client.add_event_handler(app.price_sync.receive, events.NewMessage(incoming=True))
             price_client.add_event_handler(app.price_sync.receive, events.MessageEdited(incoming=True))

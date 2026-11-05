@@ -51,6 +51,12 @@ class Store:
                 run_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
                 country TEXT NOT NULL, old_price TEXT, new_price TEXT
             );
+            CREATE TABLE IF NOT EXISTS extra_price_items (
+                source TEXT NOT NULL, item_key TEXT NOT NULL, name TEXT NOT NULL,
+                price TEXT NOT NULL, stock INTEGER, country TEXT NOT NULL,
+                warnings TEXT NOT NULL, seen_at REAL NOT NULL,
+                PRIMARY KEY(source, item_key)
+            );
             CREATE TABLE IF NOT EXISTS quotes (
                 quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 account_id INTEGER NOT NULL, sender_id INTEGER NOT NULL,
@@ -145,11 +151,54 @@ class Store:
         self.db.execute("INSERT INTO settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                         (key, json.dumps(value, ensure_ascii=False)))
 
-    def products(self) -> list[Product]:
+    def _base_products(self) -> list[Product]:
         return [Product(row['name'], Decimal(row['price']) if row['price'] else None,
                         row['stock'] if row['stock_known'] else None, row['sku'], row['country'],
                         row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])))
                 for row in self.db.execute("SELECT * FROM products ORDER BY id")]
+
+    def products(self) -> list[Product]:
+        products = self._base_products()
+        # Spreadsheet prices are only usable for ten minutes after receipt.
+        rows = self.db.execute('SELECT * FROM extra_price_items WHERE seen_at >= ? ORDER BY rowid',
+                               (time.time() - 600,))
+        products.extend(Product(r['name'], Decimal(r['price']), r['stock'], country=r['country'],
+                                warnings=tuple(json.loads(r['warnings'])), source=r['source']) for r in rows)
+        return products
+
+    def quotable_products(self) -> list[Product]:
+        items = self.products()
+        return items if self.get('price_ready', True) else [p for p in items if p.source]
+
+    def apply_extra_snapshot(self, snapshot, source: str, message_id: int, observed: float):
+        if source != 'supernova' or not snapshot.products or not (time.time() - 120 <= observed <= time.time() + 30):
+            raise PriceFeedError('Прайс пуст или получен слишком давно')
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            account = self.get('price_account_id') or self.get('telegram_account_id') or 0
+            previous_account = self.get('supernova_account_id', account)
+            if account == previous_account and message_id <= self.get('supernova_message_id', 0):
+                self.db.execute('ROLLBACK')
+                return False
+            self.db.execute('UPDATE extra_price_items SET seen_at=0 WHERE source=?', (source,))
+            for p in snapshot.products:
+                self.db.execute('''INSERT INTO extra_price_items(source,item_key,name,price,stock,country,warnings,seen_at)
+                    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(source,item_key) DO UPDATE SET
+                    name=excluded.name,price=excluded.price,stock=excluded.stock,country=excluded.country,
+                    warnings=excluded.warnings,seen_at=excluded.seen_at''',
+                    (source, product_key(p), p.name, str(p.price), p.stock, p.country,
+                     json.dumps(p.warnings), observed))
+            # Rows absent in this unverified export stay stored but cannot be offered.
+            self.set('supernova_message_id', message_id)
+            self.set('supernova_account_id', account)
+            self.set('supernova_updated_at', observed)
+            self.set('catalog_version', self.get('catalog_version', 0) + 1)
+            self.set('catalog_generation', self.get('catalog_generation', 0) + 1)
+            self.db.execute('COMMIT')
+            return True
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
 
     def markup_policy(self) -> MarkupPolicy:
         return MarkupPolicy.from_data(self.get('markup_rules'))
@@ -187,9 +236,9 @@ class Store:
 
     def apply_price_snapshot(self, snapshot, source: str) -> dict:
         previous_source = self.get('price_source')
-        if not snapshot.complete and previous_source != source and self.products():
+        if not snapshot.complete and previous_source != source and self._base_products():
             raise PriceFeedError('Для смены источника нужен полный прайс с итоговым количеством товаров')
-        old = {product_key(p): p for p in self.products()} if previous_source == source else {}
+        old = {product_key(p): p for p in self._base_products()} if previous_source == source else {}
         incoming = {product_key(p): p for p in snapshot.products}
         resulting = incoming if snapshot.complete else old | incoming
         removed = old.keys() - incoming.keys() if snapshot.complete else set()
@@ -338,7 +387,7 @@ class Store:
         serialized = json.dumps([
             {'name': p.name, 'price': str(p.price) if p.price is not None else None,
              'stock': p.stock, 'sku': p.sku, 'country': p.country,
-             'price_country': p.price_country, 'min_qty': p.min_qty, 'warnings': p.warnings}
+             'price_country': p.price_country, 'min_qty': p.min_qty, 'warnings': p.warnings, 'source': p.source}
             for p in products
         ], ensure_ascii=False)
         self.db.execute('BEGIN IMMEDIATE')
@@ -369,7 +418,7 @@ class Store:
         quote = dict(row)
         quote['products'] = [Product(p['name'], Decimal(p['price']) if p['price'] is not None else None,
                                      p['stock'], p['sku'], p['country'], p['price_country'],
-                                     p['min_qty'], tuple(p['warnings'])) for p in json.loads(row['products'])]
+                                     p['min_qty'], tuple(p['warnings']), p.get('source', '')) for p in json.loads(row['products'])]
         quote['sent_message_ids'] = [r[0] for r in self.db.execute(
             'SELECT message_id FROM quote_messages WHERE quote_id=? ORDER BY message_id', (row['quote_id'],))]
         return quote
@@ -481,7 +530,7 @@ class Store:
             identity = json.dumps([product_key(product), product.sku], ensure_ascii=False, separators=(',', ':'))
             if quote['catalog_generation'] is None or quote['catalog_generation'] != generation:
                 result = {'status': 'changed'}
-            elif self.get('price_source') is not None:
+            elif product.source or self.get('price_source') is not None:
                 result = {'status': 'supplier'}
             elif quantity is None:
                 result = {'status': 'quantity'}

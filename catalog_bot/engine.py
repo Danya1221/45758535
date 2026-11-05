@@ -53,7 +53,7 @@ class Engine:
                 return 'excluded'
             if not self.store.get('active', False):
                 return "paused"
-            if not self.store.get('price_ready', True):
+            if not self.store.get('price_ready', True) and not self.store.quotable_products():
                 return "price_unavailable"
             if message.chat_id not in self.store.chats():
                 return "unselected"
@@ -64,7 +64,7 @@ class Engine:
             pricing_version = self.store.get('pricing_version', 0)
             account_id = self.store.get('telegram_account_id', 0)
             enabled_at = self.store.get('monitor_enabled_at', 0)
-            quoted_products = price_products(self.store.products(), self.store.markup_policy())
+            quoted_products = price_products(self.store.quotable_products(), self.store.markup_policy())
             classification, found = await asyncio.to_thread(find_products, message.text, quoted_products,
                                                             self.store.get('allow_bare', True), regional_policy=True)
             if not found:
@@ -83,8 +83,10 @@ class Engine:
                     or pricing_version != self.store.get('pricing_version', 0)
                     or account_id != self.store.get('telegram_account_id', 0)
                     or enabled_at != self.store.get('monitor_enabled_at', 0)
-                    or not self.store.get('price_ready', True)):
+                    or (not self.store.get('price_ready', True) and any(not p.source for p in found))):
                 return "cancelled"
+            if any(p.source == 'supernova' for p in found) and time.time() - self.store.get('supernova_updated_at', 0) >= 600:
+                return 'cancelled'
             if self.store.is_excluded(message.sender_id):
                 return 'excluded'
             if self.store.sent_since(now - 60) >= self.max_per_minute:

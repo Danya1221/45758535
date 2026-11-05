@@ -370,6 +370,7 @@ class Product:
     price_country: str = ""
     min_qty: int = 1
     warnings: tuple[str, ...] = ()
+    source: str = ''
 
     @property
     def eligible(self) -> bool:

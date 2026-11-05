@@ -251,8 +251,8 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.auth.ready)
             self.assertIs(app.price_sync.client, app.price_client)
             self.assertEqual([callback.__self__ for callback, _ in app.client.handlers], [app, app])
-            self.assertTrue(all(callback.__self__ is app.price_sync for callback, _ in app.price_client.handlers))
-            self.assertEqual(len(app.price_client.handlers), 2)
+            self.assertEqual([callback.__self__ for callback, _ in app.price_client.handlers],
+                             [app.supernova_sync, app.price_sync, app.price_sync])
             self.assertEqual(app.store.chats(), {})
             previous_app, self.app = self.app, app
             try:
