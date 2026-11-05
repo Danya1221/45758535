@@ -111,8 +111,10 @@ class RecognitionStructureTests(unittest.TestCase):
         self.assertEqual(self.names('iPhone 17 256 Blakish', 'iPhone 17 256 Black'), [])
 
     def test_unknown_hyphen_quantity_is_not_guessed(self):
-        for ending in ('-59', '-1', '- 1'):
+        for ending in ('-59', '- 59'):
             self.assertEqual(self.names(f'iPhone 17 256 {ending}', 'iPhone 17 256'), [])
+        for ending in ('-1', '- 1'):
+            self.assertEqual(self.names(f'iPhone 17 256 {ending}', 'iPhone 17 256'), ['iPhone 17 256'])
 
     def test_conflicting_conditions_are_not_silently_relaxed(self):
         self.assertEqual(self.names('iPhone 17 new used', 'iPhone 17 used'), [])

@@ -26,6 +26,7 @@ BUY = re.compile(r"\b(?:интересует\s+цена|сколько\s+сто�
 SELL = re.compile(r"\b(?:продам|продаю|продаем|продается|продажа|отдам|wts)\b")
 CHATTER = re.compile(r"\b(?:купил|купила|обзор|сломался|сломал|спасибо|почему|настроить|обсуждаем)\b|у\s+меня")
 MONEY = re.compile(r"\d\s*(?:₽|руб\b|rub\b|р\.)", re.I)
+_DASH_QUANTITY = re.compile(r'\s[-–—]\s*(\d{1,4})\s*(шт(?:ук[аи]?)?\.?|штук(?:а|и)?)?\s*$', re.I)
 
 
 @lru_cache(maxsize=4096)
@@ -438,8 +439,8 @@ def parse_catalog(text: str) -> list[Product]:
                 raise CatalogError("нужно название товара длиной 2–240 символов")
             if any(x in name for x in ("http://", "https://", "\x00")):
                 raise CatalogError("в названии не должно быть ссылок")
-            raw_stock = cells.get("stock", "") or "1"
-            if not re.fullmatch(r"\d{1,6}", raw_stock):
+            raw_stock = cells.get("stock", "")
+            if raw_stock and not re.fullmatch(r"\d{1,6}", raw_stock):
                 raise CatalogError("остаток — целое число от 0 до 999999")
             sku = cells.get("sku", "")
             if len(sku) > 80 or (sku and not code_key(sku)):
@@ -447,7 +448,7 @@ def parse_catalog(text: str) -> list[Product]:
             key = normalize(name)
             if key in seen_names or (sku and code_key(sku) in seen_sku):
                 raise CatalogError("повтор названия или артикула")
-            product = Product(name, parse_price(cells.get("price", "")), int(raw_stock), sku)
+            product = Product(name, parse_price(cells.get("price", "")), int(raw_stock) if raw_stock else None, sku)
             spec = parse_spec(name)
             if not spec.model and not sku:
                 raise CatalogError("нужна конкретная модель или артикул")
@@ -632,6 +633,24 @@ def clean_request(text: str) -> str:
     return text.strip(' :,-')
 
 
+def split_requested_quantity(segment: str) -> tuple[str, int | None]:
+    """Accept small trailing quantities; leave price-like numbers ambiguous.
+
+    Without a unit, a two-digit number can also be a shorthand price. Require
+    an explicit unit for those rather than replying to a possible sales offer.
+    """
+    match = _DASH_QUANTITY.search(segment)
+    if not match:
+        return segment, None
+    digits, unit = match.groups()
+    if digits.startswith('0') or (unit is None and len(digits) != 1):
+        return segment, None
+    quantity = int(digits)
+    if not 1 <= quantity <= 9999:
+        return segment, None
+    return segment[:match.start()].rstrip(), quantity
+
+
 def sony_xm_reason(request: Spec, item: Spec, name: str) -> str | None:
     """A short XM6 query can list both WH and WF, with full names and prices."""
     token = next(iter(request.model))
@@ -690,13 +709,14 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
         return report
     identifiers = {p: product_identifiers(p) for p in products}
     for segment in request_segments(text):
-        request_words = {code_key(token) for token in IDENTIFIER_TOKEN.findall(segment)
+        query_text, requested_quantity = split_requested_quantity(segment)
+        request_words = {code_key(token) for token in IDENTIFIER_TOKEN.findall(query_text)
                          if not semantic_reference(token)}
         requested_skus = {code for codes in identifiers.values() for code in codes if code in request_words}
         # Attributes encoded inside a supplier ID are not an explicit request
         # for that condition, brand, color or version. Words next to it remain.
         specification_text = IDENTIFIER_TOKEN.sub(
-            lambda match: identifier_specification(match[0]) if code_key(match[0]) in requested_skus else match[0], segment)
+            lambda match: identifier_specification(match[0]) if code_key(match[0]) in requested_skus else match[0], query_text)
         samsung_request = bool(_SAMSUNG_S_PHONE.search(normalize(segment))
                                or re.search(r'\b(?:samsung|galaxy)\b|\bsm-s\d', normalize(segment)))
         if regional_policy and samsung_request:
@@ -716,6 +736,8 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
         if requested_skus:
             report.details.append('Точный артикул: ' + ', '.join(sorted(requested_skus)))
         report.details.append(describe_spec(request))
+        if requested_quantity is not None:
+            report.details.append(f'Запрошено: {requested_quantity} шт.')
         issues = list(request.issues)
         # A brand, category or series alone cannot identify a concrete product.
         named_model = (len(request.model) >= 2 or (request.brand is not None and bool(request.model))) and any(
@@ -794,6 +816,8 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
                 reason = 'регион'
             if not reason and not product.eligible:
                 reason = 'остаток / минимальный заказ / предупреждение прайса'
+            if not reason and requested_quantity is not None and product.stock is not None and product.stock < requested_quantity:
+                reason = 'недостаточный остаток'
             if not reason and request.max_price is not None and (product.price is None or product.price > request.max_price):
                 reason = 'бюджет или неизвестная цена'
             if reason:
@@ -811,6 +835,8 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
             if product not in report.products:
                 report.products.append(product)
         report.details.append(f'Подходящих позиций: {len(candidates)}.')
+        if requested_quantity is not None and any(p.stock is None for p in candidates):
+            report.details.append('Остаток не указан, количество нужно подтвердить.')
         if rejected:
             report.details.append('Отсеяно: ' + ', '.join(f'{k} — {v}' for k, v in rejected.items()))
     return report
