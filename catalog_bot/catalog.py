@@ -401,6 +401,27 @@ def parse_price(value: str) -> Decimal | None:
     return price
 
 
+_INLINE_PRICE = re.compile(
+    r'^(?P<name>.*\S)\s+(?P<amount>(?:\d{1,3}(?:[ \u00a0\u202f]\d{3}){1,2}|\d{4,8})'
+    r'(?:[,.]\d{1,2})?)\s*(?:₽|руб\.?|rub)?\s*$', re.I)
+_REGION_FLAGS = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
+
+
+def split_inline_price(line: str) -> tuple[str, str] | None:
+    """Recognize a price at the end without treating memory or count as price."""
+    if len(line) > 300:
+        return None
+    match = _INLINE_PRICE.fullmatch(line.strip())
+    if not match:
+        return None
+    name = match['name'].rstrip()
+    has_separator = bool(re.search(r'\s[-–—:]\s*$', name))
+    if not has_separator and re.search(r'\d\s*$', name):
+        return None  # e.g. a capacity followed by an ambiguous number
+    name = re.sub(r'\s[-–—:]\s*$', '', name).strip()
+    return (name, match['amount']) if name else None
+
+
 def parse_catalog(text: str) -> list[Product]:
     text = text.lstrip("\ufeff").strip()
     if not text:
@@ -423,7 +444,7 @@ def parse_catalog(text: str) -> list[Product]:
     if has_header and ("" in columns or len(columns) != len(set(columns))):
         raise CatalogError("заголовки: название | цена | остаток | артикул")
     products: list[Product] = []
-    seen_names: set[str] = set()
+    seen_names: set[tuple[str, str]] = set()
     seen_sku: set[str] = set()
     for index, row in enumerate(rows[1:] if has_header else rows, 2 if has_header else 1):
         try:
@@ -431,11 +452,21 @@ def parse_catalog(text: str) -> list[Product]:
                 raise CatalogError("слишком много столбцов")
             cells = dict(zip(columns, (cell.strip() for cell in row)))
             name = cells.get("name", "").strip()
+            inline_region = ''
             if not has_header and len(row) == 1:
                 inline_price = re.search(r"\s+[—–-]\s+(\d[\d .,]*(?:₽|руб\.?)?)\s*$", name)
                 if inline_price:
                     cells["price"] = inline_price[1]
                     name = name[:inline_price.start()].strip()
+                else:
+                    inline = split_inline_price(name)
+                    if inline:
+                        name, cells['price'] = inline
+                        regions = _REGION_FLAGS.findall(name)
+                        if len(set(regions)) > 1:
+                            raise CatalogError('указано несколько регионов')
+                        inline_region = regions[0] if regions else ''
+                        name = _REGION_FLAGS.sub('', name).strip()
             if not 2 <= len(name) <= 240 or not re.search(r"[a-zа-я]", normalize(name)):
                 raise CatalogError("нужно название товара длиной 2–240 символов")
             if any(x in name for x in ("http://", "https://", "\x00")):
@@ -446,10 +477,11 @@ def parse_catalog(text: str) -> list[Product]:
             sku = cells.get("sku", "")
             if len(sku) > 80 or (sku and not code_key(sku)):
                 raise CatalogError("неверный артикул")
-            key = normalize(name)
+            key = (normalize(name), inline_region)
             if key in seen_names or (sku and code_key(sku) in seen_sku):
                 raise CatalogError("повтор названия или артикула")
-            product = Product(name, parse_price(cells.get("price", "")), int(raw_stock) if raw_stock else None, sku)
+            product = Product(name, parse_price(cells.get("price", "")), int(raw_stock) if raw_stock else None, sku,
+                              country=inline_region)
             spec = parse_spec(name)
             if not spec.model and not sku:
                 raise CatalogError("нужна конкретная модель или артикул")

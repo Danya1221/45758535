@@ -31,6 +31,11 @@ class Store:
                 sku TEXT NOT NULL, stock_known INTEGER NOT NULL, country TEXT NOT NULL,
                 price_country TEXT NOT NULL, min_qty INTEGER NOT NULL, warnings TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS manual_price_products (
+                id INTEGER PRIMARY KEY, name TEXT NOT NULL, price TEXT, stock INTEGER NOT NULL,
+                sku TEXT NOT NULL, stock_known INTEGER NOT NULL, country TEXT NOT NULL,
+                price_country TEXT NOT NULL, min_qty INTEGER NOT NULL, warnings TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS excluded_users (
                 user_id INTEGER PRIMARY KEY, username TEXT NOT NULL DEFAULT '',
@@ -139,6 +144,21 @@ class Store:
             except BaseException:
                 self.db.execute('ROLLBACK')
                 raise
+        if not self.get('manual_price_split_v1', False):
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                if self.get('price_source') == 'manual:price':
+                    self.db.execute('''INSERT INTO manual_price_products
+                        (name,price,stock,sku,stock_known,country,price_country,min_qty,warnings)
+                        SELECT name,price,stock,sku,stock_known,country,price_country,min_qty,warnings FROM supplier_products''')
+                    self.db.execute('DELETE FROM supplier_products')
+                    self.set('manual_price_present', True)
+                    self.set('price_source', None)
+                self.set('manual_price_split_v1', True)
+                self.db.execute('COMMIT')
+            except BaseException:
+                self.db.execute('ROLLBACK')
+                raise
         path.chmod(0o600)
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('active', 'false')")
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('allow_bare', 'true')")
@@ -185,8 +205,14 @@ class Store:
                         row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])), 'supplier')
                 for row in self.db.execute('SELECT * FROM supplier_products ORDER BY id')]
 
+    def _manual_price_products(self) -> list[Product]:
+        return [Product(row['name'], Decimal(row['price']) if row['price'] else None,
+                        row['stock'] if row['stock_known'] else None, row['sku'], row['country'],
+                        row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])), 'manual_price')
+                for row in self.db.execute('SELECT * FROM manual_price_products ORDER BY id')]
+
     def products(self) -> list[Product]:
-        products = self._base_products() + self._supplier_products()
+        products = self._base_products() + self._supplier_products() + self._manual_price_products()
         # Spreadsheet prices are only usable for ten minutes after receipt.
         rows = self.db.execute('SELECT * FROM extra_price_items WHERE seen_at >= ? ORDER BY rowid',
                                (time.time() - 600,))
@@ -279,10 +305,12 @@ class Store:
             raise
 
     def apply_price_snapshot(self, snapshot, source: str) -> dict:
-        previous_source = self.get('price_source')
-        if not snapshot.complete and previous_source != source and self._supplier_products():
+        manual = source == 'manual:price'
+        previous_source = ('manual:price' if self.get('manual_price_present', False) else None) if manual else self.get('price_source')
+        existing = self._manual_price_products() if manual else self._supplier_products()
+        if not snapshot.complete and previous_source != source and existing:
             raise PriceFeedError('Для смены источника нужен полный прайс с итоговым количеством товаров')
-        old = {product_key(p): p for p in self._supplier_products()} if previous_source == source else {}
+        old = {product_key(p): p for p in existing} if previous_source == source else {}
         incoming = {product_key(p): p for p in snapshot.products}
         resulting = incoming if snapshot.complete else old | incoming
         removed = old.keys() - incoming.keys() if snapshot.complete else set()
@@ -306,16 +334,21 @@ class Store:
                                 [(cursor.lastrowid, kind, p.name, p.country or p.price_country,
                                   str(old_price) if old_price is not None else None,
                                   str(new_price) if new_price is not None else None) for kind, p, old_price, new_price in changes])
-            self.db.execute('DELETE FROM supplier_products')
-            self.db.executemany('''INSERT INTO supplier_products
+            table = 'manual_price_products' if manual else 'supplier_products'
+            self.db.execute(f'DELETE FROM {table}')
+            self.db.executemany(f'''INSERT INTO {table}
                 (name,price,stock,sku,stock_known,country,price_country,min_qty,warnings) VALUES (?,?,?,?,?,?,?,?,?)''',
                 [(p.name, str(p.price) if p.price is not None else None, p.stock if p.stock is not None else 1,
                   p.sku, int(p.stock is not None), p.country, p.price_country, p.min_qty, json.dumps(p.warnings))
                  for p in resulting.values()])
             self.set('catalog_version', self.get('catalog_version', 0) + 1)
-            self.set('price_source', source)
-            self.set('price_updated_at', time.time())
-            self.set('price_ready', True)
+            if manual:
+                self.set('manual_price_present', True)
+                self.set('manual_price_updated_at', time.time())
+            else:
+                self.set('price_source', source)
+                self.set('price_updated_at', time.time())
+                self.set('price_ready', True)
             # Supplier replies start with the product; a price feed establishes
             # neither stock availability nor a need for an automatic heading.
             if self.get('intro') in {'Есть в наличии:', 'По актуальному прайсу:'}:

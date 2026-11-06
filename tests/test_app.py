@@ -148,6 +148,27 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('По актуальному прайсу:', self.texts()[-1])
         self.assertIn('86 000 ₽', self.texts()[-1])
 
+    async def test_one_line_price_can_be_finished_and_added_without_erasing_supplier(self):
+        from catalog_bot.prices import parse_price_feed
+        self.store.apply_price_snapshot(parse_price_feed('• Sony WH-1000XM6 Black🇪🇺\n🇪🇺 От 1 шт - 25 000\nВсего найдено 1 товаров'), 'bot:123')
+        await self.feed('/uploadprice')
+        await self.feed('Apple iPhone 18 Pro Max eSIM 512Gb Burgundi 🇺🇸 138 000\n'
+                        'Apple iPhone 18 Pro eSIM 256Gb Burgundy 🇺🇸 105 500')
+        self.assertIn('Принято частей: 1', self.texts()[-1])
+        message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
+        callback = CallbackQuery(id='price-done', from_user=User(id=55, is_bot=False, first_name='Test'),
+                                 chat_instance='instance', message=message, data='price_done')
+        await self.app.dp.feed_update(self.bot, Update(update_id=101, callback_query=callback))
+        self.assertEqual(len(self.store._manual_price_products()), 2)
+        self.assertEqual(len(self.store._supplier_products()), 1)
+        self.assertTrue(any('Прайс' in text or 'прайс' in text for text in self.texts()))
+
+    async def test_own_catalog_accepts_the_same_one_line_format(self):
+        await self.feed('/catalog')
+        await self.feed('Apple iPhone 18 Pro eSIM 256Gb Burgundy 🇺🇸 105 500')
+        self.assertEqual(str(self.store._base_products()[0].price), '105500')
+        self.assertEqual(self.store._base_products()[0].country, '🇺🇸')
+
     async def test_incomplete_price_leaves_previous_version(self):
         await self.feed('/catalog')
         await self.feed('iPhone 17|85000|2')

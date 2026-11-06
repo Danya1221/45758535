@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .catalog import CatalogError, Product, normalize, parse_price, product_key
+from .catalog import CatalogError, Product, normalize, parse_price, product_key, split_inline_price
 
 FLAGS = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
 PRICE_LINE = re.compile(r'^.*?\bот\s+(\d+)\s*шт(?:\.|ук[аи]?)?\s*[-–—:]\s*(\d[\d\s.,]*?)(?:\s*(?:₽|руб\.?))?\s*$', re.I)
@@ -77,8 +77,11 @@ def parse_price_feed(text: str, *, require_complete: bool = False) -> PriceSnaps
             if len(set(title_regions)) > 1 or len(set(price_regions)) > 1:
                 warnings.append('multiple_regions')
             # "От 1 шт" is a price threshold, never an inventory quantity.
-            product = Product(name, parse_price(price[2]), stock=None, country=country,
-                              price_country=price_country, min_qty=minimum, warnings=tuple(warnings))
+            try:
+                product = Product(name, parse_price(price[2]), stock=None, country=country,
+                                  price_country=price_country, min_qty=minimum, warnings=tuple(warnings))
+            except CatalogError as exc:
+                raise PriceFeedError(f'Строка {index}: неверная цена') from exc
             key = product_key(product)
             if key in products:
                 if products[key].price != product.price:
@@ -92,6 +95,31 @@ def parse_price_feed(text: str, *, require_complete: bool = False) -> PriceSnaps
             continue
         if re.search(r'\bот\s+\d+\s+шт', line, re.I):
             raise PriceFeedError(f'Строка {index}: не удалось прочитать цену')
+        inline = split_inline_price(line)
+        if inline:
+            if pending is not None:
+                raise IncompletePrice(f'Не найдена цена для «{pending[:80]}»')
+            title, amount = inline
+            regions = FLAGS.findall(title)
+            country = regions[0] if regions else ''
+            name = re.sub(r'^\s*[•▪▫◦·*-]\s*', '', FLAGS.sub('', title)).strip()
+            if not 2 <= len(name) <= 240 or not re.search(r'[a-zа-я]', normalize(name)):
+                raise PriceFeedError(f'Строка {index}: неверное название товара')
+            warnings = ('multiple_regions',) if len(set(regions)) > 1 else ()
+            try:
+                product = Product(name, parse_price(amount), stock=None, country=country, warnings=warnings)
+            except CatalogError as exc:
+                raise PriceFeedError(f'Строка {index}: неверная цена') from exc
+            key = product_key(product)
+            if key in products:
+                if products[key].price != product.price:
+                    raise PriceFeedError(f'Разные цены на одну и ту же позицию: {name}')
+                duplicates += 1
+            else:
+                products[key] = product
+            raw_count += 1
+            last_name, last_had_price = title, True
+            continue
         if pending is not None:
             raise IncompletePrice(f'Не найдена цена для «{pending[:80]}»')
         pending, last_had_price = line, False

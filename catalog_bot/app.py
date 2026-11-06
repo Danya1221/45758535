@@ -436,7 +436,8 @@ class Application:
     async def upload_price(self, message: Message, state: FSMContext):
         await state.set_state(Inputs.price)
         await state.update_data(price_parts=[])
-        await message.answer('Пришли прайс с блоками «Название» и «От 1 шт — цена» текстом, частями или файлом .txt.\n'
+        await message.answer('Пришли прайс текстом, частями или файлом .txt. Можно «Название 🇺🇸 138 000» в одной строке '
+                             'либо блоками «Название» и «От 1 шт — цена».\n'
                              'Дождись строки «Всего найдено N товаров». Без итоговой строки можно завершить кнопкой: '
                              'обновятся только присланные позиции. Отмена: /cancel.',
                              reply_markup=keyboard([[('Завершить загрузку части прайса', 'price_done')]]))
