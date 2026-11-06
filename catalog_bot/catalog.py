@@ -405,6 +405,7 @@ _INLINE_PRICE = re.compile(
     r'^(?P<name>.*\S)\s+(?P<amount>(?:\d{1,3}(?:[ \u00a0\u202f]\d{3}){1,2}|\d{4,8})'
     r'(?:[,.]\d{1,2})?)\s*(?:₽|руб\.?|rub)?\s*$', re.I)
 _REGION_FLAGS = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
+_INLINE_STOCK = re.compile(r'\s+(\d+)\s*(?:шт\.?|штук(?:а|и)?)\s*$', re.I)
 
 
 def split_inline_price(line: str) -> tuple[str, str] | None:
@@ -420,6 +421,23 @@ def split_inline_price(line: str) -> tuple[str, str] | None:
         return None  # e.g. a capacity followed by an ambiguous number
     name = re.sub(r'\s[-–—:]\s*$', '', name).strip()
     return (name, match['amount']) if name else None
+
+
+def split_inline_price_and_stock(line: str) -> tuple[str, str, int | None] | None:
+    """Read a trailing explicit stock count, separate from the price and memory."""
+    stock_match = _INLINE_STOCK.search(line)
+    stock = None
+    if stock_match:
+        if len(stock_match[1]) > 6:
+            raise CatalogError('остаток — целое число от 0 до 999999')
+        stock = int(stock_match[1])
+        line = line[:stock_match.start()].rstrip()
+    price = split_inline_price(line)
+    if price:
+        return price[0], price[1], stock
+    if stock_match:
+        raise CatalogError('перед количеством должна быть цена')
+    return None
 
 
 def parse_catalog(text: str) -> list[Product]:
@@ -454,19 +472,21 @@ def parse_catalog(text: str) -> list[Product]:
             name = cells.get("name", "").strip()
             inline_region = ''
             if not has_header and len(row) == 1:
-                inline_price = re.search(r"\s+[—–-]\s+(\d[\d .,]*(?:₽|руб\.?)?)\s*$", name)
-                if inline_price:
-                    cells["price"] = inline_price[1]
-                    name = name[:inline_price.start()].strip()
+                inline = split_inline_price_and_stock(name)
+                if inline:
+                    name, cells['price'], stock = inline
+                    if stock is not None:
+                        cells['stock'] = str(stock)
+                    regions = _REGION_FLAGS.findall(name)
+                    if len(set(regions)) > 1:
+                        raise CatalogError('указано несколько регионов')
+                    inline_region = regions[0] if regions else ''
+                    name = _REGION_FLAGS.sub('', name).strip()
                 else:
-                    inline = split_inline_price(name)
-                    if inline:
-                        name, cells['price'] = inline
-                        regions = _REGION_FLAGS.findall(name)
-                        if len(set(regions)) > 1:
-                            raise CatalogError('указано несколько регионов')
-                        inline_region = regions[0] if regions else ''
-                        name = _REGION_FLAGS.sub('', name).strip()
+                    inline_price = re.search(r"\s+[—–-]\s+(\d[\d .,]*(?:₽|руб\.?)?)\s*$", name)
+                    if inline_price:
+                        cells['price'] = inline_price[1]
+                        name = name[:inline_price.start()].strip()
             if not 2 <= len(name) <= 240 or not re.search(r"[a-zа-я]", normalize(name)):
                 raise CatalogError("нужно название товара длиной 2–240 символов")
             if any(x in name for x in ("http://", "https://", "\x00")):

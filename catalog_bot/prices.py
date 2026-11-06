@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .catalog import CatalogError, Product, normalize, parse_price, product_key, split_inline_price
+from .catalog import CatalogError, Product, normalize, parse_price, product_key, split_inline_price_and_stock
 
 FLAGS = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
 PRICE_LINE = re.compile(r'^.*?\bот\s+(\d+)\s*шт(?:\.|ук[аи]?)?\s*[-–—:]\s*(\d[\d\s.,]*?)(?:\s*(?:₽|руб\.?))?\s*$', re.I)
@@ -95,11 +95,14 @@ def parse_price_feed(text: str, *, require_complete: bool = False) -> PriceSnaps
             continue
         if re.search(r'\bот\s+\d+\s+шт', line, re.I):
             raise PriceFeedError(f'Строка {index}: не удалось прочитать цену')
-        inline = split_inline_price(line)
+        try:
+            inline = split_inline_price_and_stock(line)
+        except CatalogError as exc:
+            raise PriceFeedError(f'Строка {index}: {exc}') from exc
         if inline:
             if pending is not None:
                 raise IncompletePrice(f'Не найдена цена для «{pending[:80]}»')
-            title, amount = inline
+            title, amount, stock = inline
             regions = FLAGS.findall(title)
             country = regions[0] if regions else ''
             name = re.sub(r'^\s*[•▪▫◦·*-]\s*', '', FLAGS.sub('', title)).strip()
@@ -107,13 +110,13 @@ def parse_price_feed(text: str, *, require_complete: bool = False) -> PriceSnaps
                 raise PriceFeedError(f'Строка {index}: неверное название товара')
             warnings = ('multiple_regions',) if len(set(regions)) > 1 else ()
             try:
-                product = Product(name, parse_price(amount), stock=None, country=country, warnings=warnings)
+                product = Product(name, parse_price(amount), stock=stock, country=country, warnings=warnings)
             except CatalogError as exc:
                 raise PriceFeedError(f'Строка {index}: неверная цена') from exc
             key = product_key(product)
             if key in products:
-                if products[key].price != product.price:
-                    raise PriceFeedError(f'Разные цены на одну и ту же позицию: {name}')
+                if products[key].price != product.price or products[key].stock != product.stock:
+                    raise PriceFeedError(f'Разные цены или остатки на одну и ту же позицию: {name}')
                 duplicates += 1
             else:
                 products[key] = product

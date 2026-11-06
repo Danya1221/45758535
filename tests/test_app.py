@@ -169,6 +169,35 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(self.store._base_products()[0].price), '105500')
         self.assertEqual(self.store._base_products()[0].country, '🇺🇸')
 
+    async def test_failed_upload_does_not_keep_poisoned_draft(self):
+        await self.feed('/uploadprice')
+        await self.feed('iPhone 18 без цены')
+        message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
+        async def finish(identifier):
+            callback = CallbackQuery(id=identifier, from_user=User(id=55, is_bot=False, first_name='Test'),
+                                     chat_instance='instance', message=message, data='price_done')
+            await self.app.dp.feed_update(self.bot, Update(update_id=101 if identifier == 'a' else 102, callback_query=callback))
+        await finish('a')
+        self.assertIn('Черновик очищен', self.texts()[-1])
+        await self.feed('Apple iPhone 18 Pro Max eSIM 512Gb Burgundi 🇺🇸 138 000 9шт')
+        await finish('b')
+        product = self.store._manual_price_products()[0]
+        self.assertEqual((str(product.price), product.stock), ('138000', 9))
+
+    async def test_my_stock_lists_own_and_manual_with_counts_not_automatic_feed(self):
+        from catalog_bot.catalog import parse_catalog
+        from catalog_bot.prices import parse_price_feed
+        self.store.replace_products(parse_catalog('iPhone 17 Black|85000|2'))
+        self.store.apply_price_snapshot(parse_price_feed('iPhone 18 Burgundy 🇺🇸 138 000 9шт'), 'manual:price')
+        self.store.apply_price_snapshot(parse_price_feed('• Sony WH-1000XM6 Black🇪🇺\n🇪🇺 От 1 шт - 25 000\nВсего найдено 1 товаров'), 'bot:123')
+        await self.feed('/mystock')
+        output = self.texts()[-1]
+        self.assertIn('iPhone 17 Black', output)
+        self.assertIn('2 шт.', output)
+        self.assertIn('iPhone 18 Burgundy', output)
+        self.assertIn('9 шт.', output)
+        self.assertNotIn('Sony WH-1000XM6', output)
+
     async def test_incomplete_price_leaves_previous_version(self):
         await self.feed('/catalog')
         await self.feed('iPhone 17|85000|2')

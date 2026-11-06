@@ -61,6 +61,7 @@ class Engine:
                 return "old"
             version = self.store.get('catalog_version', 0)
             generation = self.store.get('catalog_generation', 0)
+            manual_generation = self.store.get('manual_price_generation', 0)
             pricing_version = self.store.get('pricing_version', 0)
             account_id = self.store.get('telegram_account_id', 0)
             enabled_at = self.store.get('monitor_enabled_at', 0)
@@ -104,7 +105,7 @@ class Engine:
                 if account_id:
                     self.store.save_quote(account_id, message.sender_id, message.chat_id, message.message_id,
                                           message.text, found, now=now, sent_message_ids=sent_ids or (),
-                                          catalog_generation=generation)
+                                          catalog_generation=generation, manual_price_generation=manual_generation)
             except SendFailure as exc:
                 if str(exc) == 'excluded':
                     self.store.finish(message.chat_id, message.message_id, 'cancelled', 'excluded')

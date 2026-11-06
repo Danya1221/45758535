@@ -150,5 +150,8 @@ def format_summary(summary: dict) -> str:
         text += f"\nОбъединено точных дублей: {summary['duplicates']}."
     if summary['warnings']:
         text += f"\nСпорных строк: {summary['warnings']}; они исключены из автоматических предложений."
-    text += '\nНаличие и количество на складе источник не указал. Изменения: /changes.'
+    if summary.get('stock_known_count', 0):
+        text += f"\nОстаток указан у позиций: {summary['stock_known_count']}. Изменения: /changes."
+    else:
+        text += '\nНаличие и количество на складе источник не указал. Изменения: /changes.'
     return text

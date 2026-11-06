@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, errors, events, types
 from telethon.errors import FloodWaitError, RPCError
 
-from .catalog import CatalogError, build_reply, inspect_request, parse_catalog
+from .catalog import CatalogError, build_reply, inspect_request, parse_catalog, money
 from .engine import Engine, Incoming, SendFailure
 from .storage import Store
 from .prices import FOOTER, PriceFeedError, parse_price_feed
@@ -146,6 +146,7 @@ def menu():
         [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats_all')],
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
         [('📦 Свои товары', 'catalog'), ('⚙️ Источники ответов', 'sources')],
+        [('📋 Мои товары и остатки', 'mystock:0')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup'), ('🔧 Почему нет ответа', 'why')],
         [('📌 Отложки', 'holds:0'), ('🚫 Исключения', 'exclude:list:0')],
@@ -436,7 +437,7 @@ class Application:
     async def upload_price(self, message: Message, state: FSMContext):
         await state.set_state(Inputs.price)
         await state.update_data(price_parts=[])
-        await message.answer('Пришли прайс текстом, частями или файлом .txt. Можно «Название 🇺🇸 138 000» в одной строке '
+        await message.answer('Пришли прайс текстом, частями или файлом .txt. Можно «Название 🇺🇸 138 000 9шт» в одной строке '
                              'либо блоками «Название» и «От 1 шт — цена».\n'
                              'Дождись строки «Всего найдено N товаров». Без итоговой строки можно завершить кнопкой: '
                              'обновятся только присланные позиции. Отмена: /cancel.',
@@ -1127,7 +1128,7 @@ class Application:
         await state.clear()
         await message.answer(f'📦 Свой список заменён: {len(products)} позиций; доступны: {sum(p.eligible for p in products)}.\n'
                              f"Свои товары в ответах: {'вкл.' if self.store.source_enabled('own') else 'выкл.'}. Источники: /sources\n"
-                             'Проверка: /test нужен iPhone 17\nСкачать текущий список: /stock\n' +
+                             'Проверка: /test нужен iPhone 17\nМои товары: /mystock\n' +
                              ('Ответы продолжают работать.' if self.store.get('active', False) else 'Когда будешь готов: /run'), reply_markup=menu())
 
     async def import_price(self, message: Message, state: FSMContext, text: str):
@@ -1135,7 +1136,8 @@ class Application:
             snapshot = await asyncio.to_thread(parse_price_feed, text)
             summary = self.store.apply_price_snapshot(snapshot, 'manual:price')
         except PriceFeedError as exc:
-            await message.answer(f'Прайс не изменён: {exc}\nПришли недостающие части либо /cancel.')
+            await state.update_data(price_parts=[])
+            await message.answer(f'Прайс не изменён: {exc}\nЧерновик очищен. Пришли весь исправленный список заново или /cancel.')
             return
         await state.clear()
         await message.answer(format_summary(summary), reply_markup=menu())
@@ -1165,6 +1167,35 @@ class Application:
             except TelegramAPIError:
                 pass
         await message.answer(text, reply_markup=buttons)
+
+    async def show_my_stock(self, message: Message, page=0, *, edit=False):
+        items = [('Свой список', p) for p in self.store._base_products()]
+        items.extend(('Ручной прайс', p) for p in self.store._manual_price_products())
+        pages = max(1, (len(items) + 7) // 8)
+        page = max(0, min(page, pages - 1))
+        lines = [f'📋 Мои товары: {len(items)} · страница {page + 1}/{pages}',
+                 'Исходные цены без наценки.']
+        for source, p in items[page * 8:(page + 1) * 8]:
+            region = f' {p.country or p.price_country}' if p.country or p.price_country else ''
+            price = money(p.price) if p.price is not None else 'цена не указана'
+            stock = f'{p.stock} шт.' if p.stock is not None else 'остаток не указан'
+            lines.append(f'\n{p.name}{region}\n{price} · {stock} · {source}')
+        if not items:
+            lines.append('\nПока нет загруженных товаров. Добавить: /catalog или /uploadprice.')
+        nav = []
+        if page:
+            nav.append(('←', f'mystock:{page - 1}'))
+        if page + 1 < pages:
+            nav.append(('→', f'mystock:{page + 1}'))
+        buttons = keyboard(([nav] if nav else []) + [[('Меню', 'home')]])
+        text = '\n'.join(lines)
+        if edit:
+            try:
+                await message.edit_text(text, reply_markup=buttons, parse_mode=None)
+                return
+            except TelegramAPIError:
+                pass
+        await message.answer(text, reply_markup=buttons, parse_mode=None)
 
     def register_handlers(self):
         dp = self.dp
@@ -1224,6 +1255,11 @@ class Application:
         async def sources_command(message: Message, state: FSMContext):
             await state.clear()
             await self.show_sources(message)
+
+        @dp.message(Command('mystock'))
+        async def my_stock_command(message: Message, state: FSMContext):
+            await state.clear()
+            await self.show_my_stock(message)
 
         @dp.message(Command('timer'))
         async def timer(message: Message, state: FSMContext):
@@ -1444,6 +1480,11 @@ class Application:
                 self.store.toggle_answer_source(action.split(':', 1)[1])
                 await state.clear()
                 await self.show_sources(message, edit=True)
+            elif action.startswith('mystock:'):
+                page = action.partition(':')[2]
+                if page.isdigit():
+                    await state.clear()
+                    await self.show_my_stock(message, int(page), edit=True)
             elif action == 'price':
                 await self.request_price(message, state)
             elif action == 'uploadprice':
@@ -1680,6 +1721,7 @@ async def run(config: Config):
             ('run', 'Старт ответов'), ('pause', 'Стоп ответов'), ('start', 'Меню'),
             ('price', 'Запросить прайс у поставщика'), ('uploadprice', 'Загрузить прайс вручную'),
             ('sources', 'Источники для ответов'),
+            ('mystock', 'Мои товары и остатки'),
             ('timer', 'Автообновление прайса'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
             ('markup', 'Наценка по категориям'),

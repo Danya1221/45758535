@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 import unicodedata
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -121,6 +122,11 @@ class Store:
         quote_columns = {r[1] for r in self.db.execute('PRAGMA table_info(quotes)')}
         if 'catalog_generation' not in quote_columns:
             self.db.execute('ALTER TABLE quotes ADD COLUMN catalog_generation INTEGER')
+        if 'manual_price_generation' not in quote_columns:
+            self.db.execute('ALTER TABLE quotes ADD COLUMN manual_price_generation INTEGER')
+        reservation_columns = {r[1] for r in self.db.execute('PRAGMA table_info(stock_reservations)')}
+        if 'source' not in reservation_columns:
+            self.db.execute("ALTER TABLE stock_reservations ADD COLUMN source TEXT NOT NULL DEFAULT 'own'")
         columns = {r[1] for r in self.db.execute('PRAGMA table_info(products)')}
         for column, definition in [('stock_known', 'INTEGER NOT NULL DEFAULT 1'), ('country', "TEXT NOT NULL DEFAULT ''"),
                                    ('price_country', "TEXT NOT NULL DEFAULT ''"), ('min_qty', 'INTEGER NOT NULL DEFAULT 1'),
@@ -312,6 +318,10 @@ class Store:
             raise PriceFeedError('Для смены источника нужен полный прайс с итоговым количеством товаров')
         old = {product_key(p): p for p in existing} if previous_source == source else {}
         incoming = {product_key(p): p for p in snapshot.products}
+        if manual and not snapshot.complete:
+            # A partial price-only update does not assert a new stock count.
+            incoming = {k: replace(p, stock=old[k].stock) if p.stock is None and k in old else p
+                        for k, p in incoming.items()}
         resulting = incoming if snapshot.complete else old | incoming
         removed = old.keys() - incoming.keys() if snapshot.complete else set()
         changes = []
@@ -325,7 +335,7 @@ class Store:
         summary = {kind: sum(c[0] == kind for c in changes) for kind in ('added', 'changed', 'removed')}
         summary.update(total=len(resulting), duplicates=snapshot.duplicates,
                        warnings=sum(bool(p.warnings) for p in incoming.values()), baseline=previous_source != source,
-                       complete=snapshot.complete)
+                       complete=snapshot.complete, stock_known_count=sum(p.stock is not None for p in resulting.values()))
         self.db.execute('BEGIN IMMEDIATE')
         try:
             cursor = self.db.execute('INSERT INTO price_runs(created,source,complete,product_count,summary) VALUES (?,?,?,?,?)',
@@ -345,6 +355,7 @@ class Store:
             if manual:
                 self.set('manual_price_present', True)
                 self.set('manual_price_updated_at', time.time())
+                self.set('manual_price_generation', self.get('manual_price_generation', 0) + 1)
             else:
                 self.set('price_source', source)
                 self.set('price_updated_at', time.time())
@@ -460,13 +471,15 @@ class Store:
 
     def save_quote(self, account_id: int, sender_id: int, chat_id: int, message_id: int,
                    request_text: str, products: list[Product], now: float | None = None,
-                   sent_message_ids=(), catalog_generation=None) -> int:
+                   sent_message_ids=(), catalog_generation=None, manual_price_generation=None) -> int:
         """Persist the actual quoted prices, never a reference to the live catalog."""
         if account_id <= 0 or sender_id <= 0 or not products:
             raise ValueError('A quote requires an account, buyer and products')
         now = time.time() if now is None else now
         if catalog_generation is None:
             catalog_generation = self.get('catalog_generation', 0)
+        if manual_price_generation is None:
+            manual_price_generation = self.get('manual_price_generation', 0)
         serialized = json.dumps([
             {'name': p.name, 'price': str(p.price) if p.price is not None else None,
              'stock': p.stock, 'sku': p.sku, 'country': p.country,
@@ -477,9 +490,10 @@ class Store:
         try:
             self._prune_quote_context(now)
             self.db.execute('''INSERT OR IGNORE INTO quotes
-                (account_id,sender_id,chat_id,message_id,request_text,products,created,catalog_generation)
-                VALUES (?,?,?,?,?,?,?,?)''',
-                (account_id, sender_id, chat_id, message_id, request_text, serialized, now, catalog_generation))
+                (account_id,sender_id,chat_id,message_id,request_text,products,created,catalog_generation,manual_price_generation)
+                VALUES (?,?,?,?,?,?,?,?,?)''',
+                (account_id, sender_id, chat_id, message_id, request_text, serialized, now, catalog_generation,
+                 manual_price_generation))
             row = self.db.execute('''SELECT quote_id,sender_id FROM quotes
                 WHERE account_id=? AND chat_id=? AND message_id=?''',
                 (account_id, chat_id, message_id)).fetchone()
@@ -608,13 +622,19 @@ class Store:
             if not cursor.rowcount:
                 self.db.execute('COMMIT')
                 return {'status': 'duplicate_hold'}
-            generation = self.get('catalog_generation', 0)
+            manual = product.source == 'manual_price'
+            generation_key = 'manual_price_generation' if manual else 'catalog_generation'
+            generation = self.get(generation_key, 0)
+            quote_generation = quote['manual_price_generation'] if manual else quote['catalog_generation']
             result = {'status': 'unknown'}
-            identity = json.dumps([product_key(product), product.sku], ensure_ascii=False, separators=(',', ':'))
-            if quote['catalog_generation'] is None or quote['catalog_generation'] != generation:
-                result = {'status': 'changed'}
-            elif product.source:
+            identity_parts = [product_key(product), product.sku]
+            if manual:
+                identity_parts.append('manual_price')
+            identity = json.dumps(identity_parts, ensure_ascii=False, separators=(',', ':'))
+            if product.source not in {'', 'manual_price'}:
                 result = {'status': 'supplier'}
+            elif quote_generation is None or quote_generation != generation:
+                result = {'status': 'changed'}
             elif quantity is None:
                 result = {'status': 'quantity'}
             elif self.db.execute('''SELECT 1 FROM stock_reservations WHERE account_id=? AND sender_id=?
@@ -622,7 +642,8 @@ class Store:
                     (account_id, sender_id, identity, generation)).fetchone():
                 result = {'status': 'already'}
             else:
-                rows = self.db.execute('''SELECT * FROM products WHERE name=? AND sku=? AND country=?
+                table = 'manual_price_products' if manual else 'products'
+                rows = self.db.execute(f'''SELECT * FROM {table} WHERE name=? AND sku=? AND country=?
                     AND price_country=? AND min_qty=?''', (product.name, product.sku, product.country,
                     product.price_country, product.min_qty)).fetchall()
                 if len(rows) != 1:
@@ -633,12 +654,12 @@ class Store:
                     result = {'status': 'insufficient', 'remaining': rows[0]['stock']}
                 else:
                     item = rows[0]
-                    self.db.execute('UPDATE products SET stock=stock-? WHERE id=?', (quantity, item['id']))
+                    self.db.execute(f'UPDATE {table} SET stock=stock-? WHERE id=?', (quantity, item['id']))
                     self.set('catalog_version', self.get('catalog_version', 0) + 1)
                     reserved = self.db.execute('''INSERT INTO stock_reservations
-                        (account_id,sender_id,quote_id,product_key,generation,product_id,product_name,quantity,created)
-                        VALUES (?,?,?,?,?,?,?,?,?)''', (account_id, sender_id, quote_id, identity, generation,
-                                                        item['id'], product.name, quantity, now))
+                        (account_id,sender_id,quote_id,product_key,generation,product_id,product_name,quantity,created,source)
+                        VALUES (?,?,?,?,?,?,?,?,?,?)''', (account_id, sender_id, quote_id, identity, generation,
+                                                        item['id'], product.name, quantity, now, 'manual_price' if manual else 'own'))
                     result = {'status': 'reserved', 'quantity': quantity, 'remaining': item['stock'] - quantity,
                               'reservation_id': reserved.lastrowid}
             if result['status'] != 'already':
@@ -690,10 +711,13 @@ class Store:
             row = self.db.execute('SELECT * FROM stock_reservations WHERE id=? AND active=1', (reservation_id,)).fetchone()
             if not row:
                 result = 'missing'
-            elif row['generation'] != self.get('catalog_generation', 0):
+            elif row['source'] not in {'own', 'manual_price'}:
+                result = 'changed'
+            elif row['generation'] != self.get('manual_price_generation' if row['source'] == 'manual_price' else 'catalog_generation', 0):
                 result = 'changed'
             else:
-                cursor = self.db.execute('UPDATE products SET stock=stock+? WHERE id=? AND stock_known=1',
+                table = 'manual_price_products' if row['source'] == 'manual_price' else 'products'
+                cursor = self.db.execute(f'UPDATE {table} SET stock=stock+? WHERE id=? AND stock_known=1',
                                          (row['quantity'], row['product_id']))
                 if not cursor.rowcount:
                     result = 'changed'
