@@ -101,6 +101,17 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         await self.feed('/pause')
         self.assertFalse(self.store.get('active'))
 
+    async def test_sources_panel_switches_price_without_disabling_own_goods(self):
+        await self.feed('/sources')
+        self.assertIn('Прайсы поставщиков: включены', self.texts()[-1])
+        message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
+        callback = CallbackQuery(id='sources', from_user=User(id=55, is_bot=False, first_name='Test'),
+                                 chat_instance='instance', message=message, data='sources:price')
+        await self.app.dp.feed_update(self.bot, Update(update_id=101, callback_query=callback))
+        self.assertFalse(self.store.source_enabled('price'))
+        self.assertTrue(self.store.source_enabled('own'))
+        self.assertIn('Прайсы поставщиков: выключены', self.texts()[-1])
+
     async def test_invalid_import_keeps_old_catalog_and_waits_for_correction(self):
         await self.feed('/catalog')
         await self.feed('iPhone 17|85000|2')

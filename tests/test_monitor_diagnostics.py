@@ -87,6 +87,8 @@ class DiagnosticTests(unittest.IsolatedAsyncioTestCase):
         self.store.set('monitor_enabled_at', 0)
         self.assertEqual(self.diagnose(monitor_started_at=1001).result, 'before_start')
         self.store.set('price_ready', False)
+        self.assertEqual(self.diagnose().result, 'not_observed')
+        self.store.toggle_answer_source('own')
         self.assertEqual(self.diagnose().result, 'price_unavailable')
 
     def test_seller_messages_and_bare_disabled_are_not_missing_events(self):

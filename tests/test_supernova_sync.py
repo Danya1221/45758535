@@ -64,9 +64,9 @@ class SupernovaSyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_expiry_and_unavailable_main_are_isolated(self):
         await self.sync.receive(event())
         self.store.set('price_ready', False)
-        self.assertEqual([p.source for p in self.store.quotable_products()], ['supernova'])
+        self.assertEqual([p.source for p in self.store.quotable_products()], ['', 'supernova'])
         with patch('catalog_bot.storage.time.time', return_value=time.time() + 601):
-            self.assertEqual(self.store.quotable_products(), [])
+            self.assertEqual([p.source for p in self.store.quotable_products()], [''])
         self.assertEqual(len(self.store._base_products()), 1)
 
     async def test_primary_supplier_refresh_keeps_supernova(self):

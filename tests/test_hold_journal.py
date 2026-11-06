@@ -30,7 +30,7 @@ class HoldJournalTests(unittest.IsolatedAsyncioTestCase):
         self.product = Product('Galaxy S26 12/256 Black SM-S942B/DS', Decimal('57000'), None, country='🇿🇦')
         self.store.replace_products([self.product])
         self.store.set('price_source', 'bot:999')
-        self.quoted = replace(self.product, price=Decimal('57500'))
+        self.quoted = replace(self.product, price=Decimal('57500'), source='supplier')
         self.quote_id = self.store.save_quote(77, 88, -123, 28, 's26 black', [self.quoted],
                                               now=1000, sent_message_ids=[900])
         self.sender = SimpleNamespace(id=88, username='buyer_test', first_name='Илья', last_name=None)

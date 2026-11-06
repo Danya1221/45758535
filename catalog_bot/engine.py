@@ -83,7 +83,7 @@ class Engine:
                     or pricing_version != self.store.get('pricing_version', 0)
                     or account_id != self.store.get('telegram_account_id', 0)
                     or enabled_at != self.store.get('monitor_enabled_at', 0)
-                    or (not self.store.get('price_ready', True) and any(not p.source for p in found))):
+                    or (not self.store.get('price_ready', True) and any(p.source == 'supplier' for p in found))):
                 return "cancelled"
             if any(p.source == 'supernova' for p in found) and time.time() - self.store.get('supernova_updated_at', 0) >= 600:
                 return 'cancelled'

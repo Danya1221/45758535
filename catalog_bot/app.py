@@ -145,6 +145,7 @@ def menu():
     return keyboard([
         [('💰 Запросить прайс', 'price'), ('💬 Группы', 'chats_all')],
         [('⏱ Автообновление', 'price_timer'), ('📥 Загрузить вручную', 'uploadprice')],
+        [('📦 Свои товары', 'catalog'), ('⚙️ Источники ответов', 'sources')],
         [('🔎 Проверить запрос', 'test'), ('📊 Статус', 'status')],
         [('💸 Наценка', 'markup'), ('🔧 Почему нет ответа', 'why')],
         [('📌 Отложки', 'holds:0'), ('🚫 Исключения', 'exclude:list:0')],
@@ -848,6 +849,8 @@ class Application:
                 f"Прайс: {'готов к использованию' if self.store.get('price_ready', True) else 'требует успешного обновления'}\n"
                 f'{price_error_line}'
                 f"Источник: {self.config.price_bot or 'ручная загрузка'}\n"
+                f"Свои товары в ответах: {'вкл.' if self.store.source_enabled('own') else 'выкл.'}\n"
+                f"Прайсы в ответах: {'вкл.' if self.store.source_enabled('price') else 'выкл.'}\n"
                 f'Supernova: {supernova_text}. Excel действует 10 минут.\n'
                 f'{self.price_timer_status()}\n'
                 f'Выбрано групп: {len(self.store.chats())}\n'
@@ -863,7 +866,9 @@ class Application:
     async def activate(self, message: Message):
         if not await self.require_account(message):
             return
-        if not self.store.quotable_products() and not self.store.get('price_ready', True):
+        if not self.store.source_enabled('own') and not self.store.source_enabled('price'):
+            await message.answer('Все источники ответов выключены. Включи нужный: /sources.')
+        elif not self.store.quotable_products() and not self.store.get('price_ready', True):
             await message.answer('Дождись успешного обновления прайса: /refresh. Статус: /status')
         elif not any(p.eligible for p in self.store.quotable_products()):
             await message.answer('Сначала запроси прайс /price, загрузи вручную /uploadprice или добавь список /catalog.')
@@ -1089,7 +1094,7 @@ class Application:
     async def show_test(self, message: Message, text: str):
         products = price_products(self.store.quotable_products(), self.store.markup_policy())
         if not products:
-            await message.answer('Сначала загрузи список: /catalog')
+            await message.answer('Нет доступных товаров для ответа. Проверь источники: /sources и статус: /status.')
             return
         report = await asyncio.to_thread(inspect_request, text, products, self.store.get('allow_bare', True), regional_policy=True)
         classification, found = report.classification, report.products
@@ -1119,7 +1124,8 @@ class Application:
             return
         self.store.replace_products(products)
         await state.clear()
-        await message.answer(f'📦 Список заменён: {len(products)} позиций; доступны: {sum(p.eligible for p in products)}.\n'
+        await message.answer(f'📦 Свой список заменён: {len(products)} позиций; доступны: {sum(p.eligible for p in products)}.\n'
+                             f"Свои товары в ответах: {'вкл.' if self.store.source_enabled('own') else 'выкл.'}. Источники: /sources\n"
                              'Проверка: /test нужен iPhone 17\nСкачать текущий список: /stock\n' +
                              ('Ответы продолжают работать.' if self.store.get('active', False) else 'Когда будешь готов: /run'), reply_markup=menu())
 
@@ -1132,6 +1138,32 @@ class Application:
             return
         await state.clear()
         await message.answer(format_summary(summary), reply_markup=menu())
+
+    def sources_panel(self):
+        own = self.store.source_enabled('own')
+        price = self.store.source_enabled('price')
+        text = ('⚙️ Источники ответов\n\n'
+                f"Свои товары: {'включены' if own else 'выключены'}\n"
+                f"Прайсы поставщиков: {'включены' if price else 'выключены'}\n\n"
+                'Нажми на кнопку, чтобы переключить. Выключенные товары сохраняются; '
+                'автообновление прайса настраивается отдельно.\n'
+                'Свой список: /catalog')
+        buttons = keyboard([
+            [(f"{'✅' if own else '⛔'} Свои товары", 'sources:own')],
+            [(f"{'✅' if price else '⛔'} Прайсы поставщиков", 'sources:price')],
+            [('Меню', 'home')],
+        ])
+        return text, buttons
+
+    async def show_sources(self, message: Message, *, edit=False):
+        text, buttons = self.sources_panel()
+        if edit:
+            try:
+                await message.edit_text(text, reply_markup=buttons)
+                return
+            except TelegramAPIError:
+                pass
+        await message.answer(text, reply_markup=buttons)
 
     def register_handlers(self):
         dp = self.dp
@@ -1186,6 +1218,11 @@ class Application:
         @dp.message(Command('uploadprice'))
         async def upload_price(message: Message, state: FSMContext):
             await self.upload_price(message, state)
+
+        @dp.message(Command('sources'))
+        async def sources_command(message: Message, state: FSMContext):
+            await state.clear()
+            await self.show_sources(message)
 
         @dp.message(Command('timer'))
         async def timer(message: Message, state: FSMContext):
@@ -1399,6 +1436,13 @@ class Application:
             elif action == 'catalog':
                 await state.set_state(Inputs.catalog)
                 await message.answer(CATALOG_PROMPT)
+            elif action == 'sources':
+                await state.clear()
+                await self.show_sources(message)
+            elif action in {'sources:own', 'sources:price'}:
+                self.store.toggle_answer_source(action.split(':', 1)[1])
+                await state.clear()
+                await self.show_sources(message, edit=True)
             elif action == 'price':
                 await self.request_price(message, state)
             elif action == 'uploadprice':
@@ -1634,6 +1678,7 @@ async def run(config: Config):
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in [
             ('run', 'Старт ответов'), ('pause', 'Стоп ответов'), ('start', 'Меню'),
             ('price', 'Запросить прайс у поставщика'), ('uploadprice', 'Загрузить прайс вручную'),
+            ('sources', 'Источники для ответов'),
             ('timer', 'Автообновление прайса'), ('changes', 'Изменения цен'),
             ('refresh', 'Обновить прайс из бота'), ('catalog', 'Загрузить список'), ('chats', 'Выбрать группы'),
             ('markup', 'Наценка по категориям'),

@@ -26,6 +26,11 @@ class Store:
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY, name TEXT NOT NULL, price TEXT, stock INTEGER NOT NULL, sku TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS supplier_products (
+                id INTEGER PRIMARY KEY, name TEXT NOT NULL, price TEXT, stock INTEGER NOT NULL,
+                sku TEXT NOT NULL, stock_known INTEGER NOT NULL, country TEXT NOT NULL,
+                price_country TEXT NOT NULL, min_qty INTEGER NOT NULL, warnings TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS excluded_users (
                 user_id INTEGER PRIMARY KEY, username TEXT NOT NULL DEFAULT '',
@@ -117,6 +122,23 @@ class Store:
                                    ('warnings', "TEXT NOT NULL DEFAULT '[]'")]:
             if column not in columns:
                 self.db.execute(f'ALTER TABLE products ADD COLUMN {column} {definition}')
+        # Older deployments held either the supplier feed or the owner's list
+        # in the same table. Move only an explicitly identified supplier feed.
+        if not self.get('source_split_v1', False):
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                if self.get('price_source') is not None:
+                    self.db.execute('''INSERT INTO supplier_products
+                        (name,price,stock,sku,stock_known,country,price_country,min_qty,warnings)
+                        SELECT name,price,stock,sku,stock_known,country,price_country,min_qty,warnings FROM products''')
+                    self.db.execute('DELETE FROM products')
+                    # Older quotes did not carry their supplier identity.
+                    self.set('catalog_generation', self.get('catalog_generation', 0) + 1)
+                self.set('source_split_v1', True)
+                self.db.execute('COMMIT')
+            except BaseException:
+                self.db.execute('ROLLBACK')
+                raise
         path.chmod(0o600)
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('active', 'false')")
         self.db.execute("INSERT OR IGNORE INTO settings VALUES ('allow_bare', 'true')")
@@ -157,8 +179,14 @@ class Store:
                         row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])))
                 for row in self.db.execute("SELECT * FROM products ORDER BY id")]
 
+    def _supplier_products(self) -> list[Product]:
+        return [Product(row['name'], Decimal(row['price']) if row['price'] else None,
+                        row['stock'] if row['stock_known'] else None, row['sku'], row['country'],
+                        row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])), 'supplier')
+                for row in self.db.execute('SELECT * FROM supplier_products ORDER BY id')]
+
     def products(self) -> list[Product]:
-        products = self._base_products()
+        products = self._base_products() + self._supplier_products()
         # Spreadsheet prices are only usable for ten minutes after receipt.
         rows = self.db.execute('SELECT * FROM extra_price_items WHERE seen_at >= ? ORDER BY rowid',
                                (time.time() - 600,))
@@ -167,8 +195,27 @@ class Store:
         return products
 
     def quotable_products(self) -> list[Product]:
-        items = self.products()
-        return items if self.get('price_ready', True) else [p for p in items if p.source]
+        return [p for p in self.products() if
+                ((not p.source and self.source_enabled('own')) or
+                 (p.source and self.source_enabled('price') and
+                  (p.source != 'supplier' or self.get('price_ready', True))))]
+
+    def source_enabled(self, source: str) -> bool:
+        if source not in {'own', 'price'}:
+            raise ValueError('Unknown source')
+        return self.get('answers_source_' + source, True) is not False
+
+    def toggle_answer_source(self, source: str) -> bool:
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            enabled = not self.source_enabled(source)
+            self.set('answers_source_' + source, enabled)
+            self.set('catalog_version', self.get('catalog_version', 0) + 1)
+            self.db.execute('COMMIT')
+            return enabled
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
 
     def apply_extra_snapshot(self, snapshot, source: str, message_id: int, observed: float):
         if source != 'supernova' or not snapshot.products or not (time.time() - 120 <= observed <= time.time() + 30):
@@ -193,7 +240,6 @@ class Store:
             self.set('supernova_account_id', account)
             self.set('supernova_updated_at', observed)
             self.set('catalog_version', self.get('catalog_version', 0) + 1)
-            self.set('catalog_generation', self.get('catalog_generation', 0) + 1)
             self.db.execute('COMMIT')
             return True
         except BaseException:
@@ -227,8 +273,6 @@ class Store:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._write_products(products)
-            self.set('price_source', None)
-            self.set('price_ready', True)
             self.db.execute("COMMIT")
         except BaseException:
             self.db.execute("ROLLBACK")
@@ -236,9 +280,9 @@ class Store:
 
     def apply_price_snapshot(self, snapshot, source: str) -> dict:
         previous_source = self.get('price_source')
-        if not snapshot.complete and previous_source != source and self._base_products():
+        if not snapshot.complete and previous_source != source and self._supplier_products():
             raise PriceFeedError('Для смены источника нужен полный прайс с итоговым количеством товаров')
-        old = {product_key(p): p for p in self._base_products()} if previous_source == source else {}
+        old = {product_key(p): p for p in self._supplier_products()} if previous_source == source else {}
         incoming = {product_key(p): p for p in snapshot.products}
         resulting = incoming if snapshot.complete else old | incoming
         removed = old.keys() - incoming.keys() if snapshot.complete else set()
@@ -262,7 +306,13 @@ class Store:
                                 [(cursor.lastrowid, kind, p.name, p.country or p.price_country,
                                   str(old_price) if old_price is not None else None,
                                   str(new_price) if new_price is not None else None) for kind, p, old_price, new_price in changes])
-            self._write_products(resulting.values())
+            self.db.execute('DELETE FROM supplier_products')
+            self.db.executemany('''INSERT INTO supplier_products
+                (name,price,stock,sku,stock_known,country,price_country,min_qty,warnings) VALUES (?,?,?,?,?,?,?,?,?)''',
+                [(p.name, str(p.price) if p.price is not None else None, p.stock if p.stock is not None else 1,
+                  p.sku, int(p.stock is not None), p.country, p.price_country, p.min_qty, json.dumps(p.warnings))
+                 for p in resulting.values()])
+            self.set('catalog_version', self.get('catalog_version', 0) + 1)
             self.set('price_source', source)
             self.set('price_updated_at', time.time())
             self.set('price_ready', True)
@@ -530,7 +580,7 @@ class Store:
             identity = json.dumps([product_key(product), product.sku], ensure_ascii=False, separators=(',', ':'))
             if quote['catalog_generation'] is None or quote['catalog_generation'] != generation:
                 result = {'status': 'changed'}
-            elif product.source or self.get('price_source') is not None:
+            elif product.source:
                 result = {'status': 'supplier'}
             elif quantity is None:
                 result = {'status': 'quantity'}
@@ -607,7 +657,7 @@ class Store:
             row = self.db.execute('SELECT * FROM stock_reservations WHERE id=? AND active=1', (reservation_id,)).fetchone()
             if not row:
                 result = 'missing'
-            elif row['generation'] != self.get('catalog_generation', 0) or self.get('price_source') is not None:
+            elif row['generation'] != self.get('catalog_generation', 0):
                 result = 'changed'
             else:
                 cursor = self.db.execute('UPDATE products SET stock=stock+? WHERE id=? AND stock_known=1',

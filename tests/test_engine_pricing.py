@@ -112,6 +112,7 @@ class EnginePricingTests(unittest.IsolatedAsyncioTestCase):
             return parse_price_feed('• iPhone 17 256 Black SIM🇺🇸\n'
                                     f'🇺🇸 От 1 шт - {price}\nВсего найдено 1 товаров', require_complete=True)
         self.store.apply_price_snapshot(snapshot('85 000'), 'bot:123')
+        self.store.toggle_answer_source('own')
         self.policy(fixed('2500'))
         self.assertEqual(await self.engine.process(self.incoming()), 'sent')
         self.assertIn('87 500 ₽', self.sent[-1][2])
@@ -119,7 +120,7 @@ class EnginePricingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.engine.process(self.incoming()), 'sent')
         self.assertIn('92 500 ₽', self.sent[-1][2])
         self.assertNotIn('95 000 ₽', self.sent[-1][2])
-        self.assertEqual(self.store.products()[0].price, Decimal('90000'))
+        self.assertEqual(self.store._supplier_products()[0].price, Decimal('90000'))
         _, changes = self.store.latest_price_run()
         self.assertEqual(changes[0]['old_price'], '85000')
         self.assertEqual(changes[0]['new_price'], '90000')

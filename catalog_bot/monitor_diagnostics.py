@@ -63,7 +63,7 @@ class MessageDiagnostic:
 
 def _current_match(store: Store, text: str) -> MessageDiagnostic:
     allow_bare = store.get('allow_bare', True)
-    products = price_products(store.products(), store.markup_policy())
+    products = price_products(store.quotable_products(), store.markup_policy())
     report = inspect_request(text, products, allow_bare, regional_policy=True)
     if report.products:
         return MessageDiagnostic('not_observed', current_match_details=f'Подходящих позиций сейчас: {len(report.products)}.')
@@ -120,7 +120,7 @@ def diagnose_message(store: Store, message: Incoming, *, account_ready: bool = T
         return MessageDiagnostic('paused')
     if message.timestamp < store.get('monitor_enabled_at', 0):
         return MessageDiagnostic('before_enable')
-    if not store.get('price_ready', True):
+    if not store.get('price_ready', True) and not store.quotable_products():
         return MessageDiagnostic('price_unavailable')
     if not -30 <= now - message.timestamp <= max_age:
         return MessageDiagnostic('old')
