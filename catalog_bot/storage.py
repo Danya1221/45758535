@@ -217,6 +217,52 @@ class Store:
                         row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])), 'manual_price')
                 for row in self.db.execute('SELECT * FROM manual_price_products ORDER BY id')]
 
+    def personal_items(self):
+        items = []
+        for source, table, generation_key in (('o', 'products', 'catalog_generation'),
+                                              ('m', 'manual_price_products', 'manual_price_generation')):
+            generation = self.get(generation_key, 0)
+            for row in self.db.execute(f'SELECT * FROM {table} ORDER BY id'):
+                product = Product(row['name'], Decimal(row['price']) if row['price'] else None,
+                                  row['stock'] if row['stock_known'] else None, row['sku'], row['country'],
+                                  row['price_country'], row['min_qty'], tuple(json.loads(row['warnings'])),
+                                  'manual_price' if source == 'm' else '')
+                items.append((source, row['id'], generation, product))
+        return items
+
+    def personal_item(self, source: str, item_id: int, generation: int):
+        return next((item for item in self.personal_items()
+                     if item[:3] == (source, item_id, generation)), None)
+
+    def delete_personal_item(self, source: str, item_id: int, generation: int) -> str:
+        sources = {'o': ('products', 'catalog_generation', 'own'),
+                   'm': ('manual_price_products', 'manual_price_generation', 'manual_price')}
+        if source not in sources or type(item_id) is not int or item_id <= 0 or type(generation) is not int or generation < 0:
+            return 'stale'
+        table, generation_key, reserve_source = sources[source]
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            if self.get(generation_key, 0) != generation:
+                self.db.execute('COMMIT')
+                return 'stale'
+            row = self.db.execute(f'SELECT 1 FROM {table} WHERE id=?', (item_id,)).fetchone()
+            if not row:
+                self.db.execute('COMMIT')
+                return 'stale'
+            reserved = self.db.execute('''SELECT 1 FROM stock_reservations
+                WHERE source=? AND product_id=? AND generation=? AND active=1 LIMIT 1''',
+                                       (reserve_source, item_id, generation)).fetchone()
+            if reserved:
+                self.db.execute('COMMIT')
+                return 'reserved'
+            self.db.execute(f'DELETE FROM {table} WHERE id=?', (item_id,))
+            self.set('catalog_version', self.get('catalog_version', 0) + 1)
+            self.db.execute('COMMIT')
+            return 'deleted'
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
     def products(self) -> list[Product]:
         products = self._base_products() + self._supplier_products() + self._manual_price_products()
         # Spreadsheet prices are only usable for ten minutes after receipt.

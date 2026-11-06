@@ -1169,17 +1169,19 @@ class Application:
         await message.answer(text, reply_markup=buttons)
 
     async def show_my_stock(self, message: Message, page=0, *, edit=False):
-        items = [('Свой список', p) for p in self.store._base_products()]
-        items.extend(('Ручной прайс', p) for p in self.store._manual_price_products())
+        items = self.store.personal_items()
         pages = max(1, (len(items) + 7) // 8)
         page = max(0, min(page, pages - 1))
         lines = [f'📋 Мои товары: {len(items)} · страница {page + 1}/{pages}',
                  'Исходные цены без наценки.']
-        for source, p in items[page * 8:(page + 1) * 8]:
+        delete_buttons = []
+        for index, (source, item_id, generation, p) in enumerate(items[page * 8:(page + 1) * 8], 1):
             region = f' {p.country or p.price_country}' if p.country or p.price_country else ''
             price = money(p.price) if p.price is not None else 'цена не указана'
             stock = f'{p.stock} шт.' if p.stock is not None else 'остаток не указан'
-            lines.append(f'\n{p.name}{region}\n{price} · {stock} · {source}')
+            source_label = 'Свой список' if source == 'o' else 'Ручной прайс'
+            lines.append(f'\n{index}. {p.name}{region}\n{price} · {stock} · {source_label}')
+            delete_buttons.append((f'🗑 {index}', f'mdel:{source}:{item_id}:{generation}:{page}'))
         if not items:
             lines.append('\nПока нет загруженных товаров. Добавить: /catalog или /uploadprice.')
         nav = []
@@ -1187,7 +1189,10 @@ class Application:
             nav.append(('←', f'mystock:{page - 1}'))
         if page + 1 < pages:
             nav.append(('→', f'mystock:{page + 1}'))
-        buttons = keyboard(([nav] if nav else []) + [[('Меню', 'home')]])
+        if delete_buttons:
+            lines.append('\nДля удаления нажми 🗑 с номером товара.')
+        rows = [delete_buttons[i:i + 4] for i in range(0, len(delete_buttons), 4)]
+        buttons = keyboard(rows + ([nav] if nav else []) + [[('Меню', 'home')]])
         text = '\n'.join(lines)
         if edit:
             try:
@@ -1196,6 +1201,24 @@ class Application:
             except TelegramAPIError:
                 pass
         await message.answer(text, reply_markup=buttons, parse_mode=None)
+
+    async def confirm_my_stock_delete(self, message: Message, source: str, item_id: int, generation: int, page: int):
+        item = self.store.personal_item(source, item_id, generation)
+        if item is None:
+            await message.answer('Список изменился. Открой /mystock и выбери товар заново.')
+            return
+        p = item[3]
+        region = f' {p.country or p.price_country}' if p.country or p.price_country else ''
+        price = money(p.price) if p.price is not None else 'цена не указана'
+        stock = f'{p.stock} шт.' if p.stock is not None else 'остаток не указан'
+        source_label = 'Свой список' if source == 'o' else 'Ручной прайс'
+        text = f'Удалить эту позицию?\n\n{p.name}{region}\n{price} · {stock} · {source_label}'
+        buttons = keyboard([[('🗑 Удалить', f'mconfirm:{source}:{item_id}:{generation}:{page}'),
+                             ('Отмена', f'mystock:{page}')]])
+        try:
+            await message.edit_text(text, reply_markup=buttons, parse_mode=None)
+        except TelegramAPIError:
+            await message.answer(text, reply_markup=buttons, parse_mode=None)
 
     def register_handlers(self):
         dp = self.dp
@@ -1485,6 +1508,23 @@ class Application:
                 if page.isdigit():
                     await state.clear()
                     await self.show_my_stock(message, int(page), edit=True)
+            elif action.startswith(('mdel:', 'mconfirm:')):
+                parts = action.split(':')
+                if (len(parts) != 5 or parts[1] not in {'o', 'm'}
+                        or not all(x.isdigit() and len(x) <= 18 for x in parts[2:])):
+                    return
+                source, item_id, generation, page = parts[1], int(parts[2]), int(parts[3]), int(parts[4])
+                if parts[0] == 'mdel':
+                    await self.confirm_my_stock_delete(message, source, item_id, generation, page)
+                else:
+                    result = self.store.delete_personal_item(source, item_id, generation)
+                    if result == 'reserved':
+                        await message.answer('У товара есть активная отложка. Сначала проверь /reserves и сними резерв, если нужно.')
+                    elif result == 'stale':
+                        await message.answer('Список изменился. Открой /mystock и выбери товар заново.')
+                    else:
+                        await message.answer('✅ Товар удалён из твоего списка.')
+                        await self.show_my_stock(message, page)
             elif action == 'price':
                 await self.request_price(message, state)
             elif action == 'uploadprice':

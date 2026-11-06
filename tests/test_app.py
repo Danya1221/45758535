@@ -198,6 +198,53 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('9 шт.', output)
         self.assertNotIn('Sony WH-1000XM6', output)
 
+    async def test_delete_item_requires_confirmation_and_only_removes_selection(self):
+        from catalog_bot.catalog import parse_catalog
+        self.store.replace_products(parse_catalog('iPhone 17 Black|85000|2\niPhone 17 Silver|86000|3'))
+        await self.feed('/mystock')
+        view = [m for m in self.transport.calls if m.__api_method__ == 'sendMessage'][-1]
+        select = view.reply_markup.inline_keyboard[0][0].callback_data
+        message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
+        callback = CallbackQuery(id='select', from_user=User(id=55, is_bot=False, first_name='Test'),
+                                 chat_instance='instance', message=message, data=select)
+        await self.app.dp.feed_update(self.bot, Update(update_id=101, callback_query=callback))
+        self.assertEqual(len(self.store._base_products()), 2)
+        confirm = [m for m in self.transport.calls if m.__api_method__ == 'editMessageText'][-1]
+        self.assertIn('iPhone 17 Black', confirm.text)
+        action = confirm.reply_markup.inline_keyboard[0][0].callback_data
+        callback = CallbackQuery(id='confirm', from_user=User(id=55, is_bot=False, first_name='Test'),
+                                 chat_instance='instance', message=message, data=action)
+        await self.app.dp.feed_update(self.bot, Update(update_id=102, callback_query=callback))
+        self.assertEqual([p.name for p in self.store._base_products()], ['iPhone 17 Silver'])
+
+    async def test_foreign_user_cannot_confirm_product_deletion(self):
+        from catalog_bot.catalog import parse_catalog
+        self.store.replace_products(parse_catalog('iPhone 17 Black|85000|2'))
+        source, item_id, generation, _ = self.store.personal_items()[0]
+        message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
+        callback = CallbackQuery(id='foreign', from_user=User(id=66, is_bot=False, first_name='Other'),
+                                 chat_instance='instance', message=message,
+                                 data=f'mconfirm:{source}:{item_id}:{generation}:0')
+        await self.app.dp.feed_update(self.bot, Update(update_id=103, callback_query=callback))
+        self.assertEqual(len(self.store._base_products()), 1)
+
+    async def test_my_stock_paginates_and_keeps_delete_buttons(self):
+        from catalog_bot.catalog import parse_catalog
+        self.store.replace_products(parse_catalog('\n'.join(f'iPhone 17 Black item{i}|85000|2' for i in range(10))))
+        await self.feed('/mystock')
+        view = [m for m in self.transport.calls if m.__api_method__ == 'sendMessage'][-1]
+        self.assertTrue(any(button.callback_data == 'mystock:1'
+                            for row in view.reply_markup.inline_keyboard for button in row))
+        message = Message(message_id=9, date=datetime.now(timezone.utc), chat=Chat(id=55, type='private'))
+        callback = CallbackQuery(id='next', from_user=User(id=55, is_bot=False, first_name='Test'),
+                                 chat_instance='instance', message=message, data='mystock:1')
+        await self.app.dp.feed_update(self.bot, Update(update_id=104, callback_query=callback))
+        edit = [m for m in self.transport.calls if m.__api_method__ == 'editMessageText'][-1]
+        self.assertIn('страница 2/2', edit.text)
+        self.assertIn('item8', edit.text)
+        self.assertTrue(any(button.callback_data.startswith('mdel:')
+                            for row in edit.reply_markup.inline_keyboard for button in row))
+
     async def test_incomplete_price_leaves_previous_version(self):
         await self.feed('/catalog')
         await self.feed('iPhone 17|85000|2')
