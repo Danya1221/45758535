@@ -12,7 +12,7 @@ from functools import lru_cache
 from .lexicon import ALIASES, BRAND_OWNERS, COLORS, normalize_text, normalize_request_with_notes
 
 
-VARIANTS = frozenset("pro max plus ultra mini lite air edge se xl fold fe".split())
+VARIANTS = frozenset("pro max plus ultra mini duo lite air edge se xl fold fe".split())
 FILLER = frozenset(
     "куплю купим ищу ищем нужен нужна нужно нужны интересует возьму предложите "
     "предлагайте пожалуйста у кого есть кто продаст wtb "
@@ -229,7 +229,7 @@ def parse_spec(text: str) -> Spec:
     variant = set(words(n)) & VARIANTS
     family = "generic"
     model: set[str] = set()
-    iphone = re.search(r"\biphone\s+(\d{1,2})\b", core) if category == 'device' else None
+    iphone = re.search(r"\biphone\s+(?:duo\s+)?(\d{1,2})\b", core) if category == 'device' else None
     short_iphone = re.search(r"^\s*(\d{1,2})\b", core) if category == 'device' else None
     if iphone:
         family, model = "iphone", {iphone[1]}
@@ -265,6 +265,7 @@ def parse_spec(text: str) -> Spec:
         if t not in FILLER and t not in VARIANTS and t not in {str(s) for s in storage}
         and (ram is None or t != str(ram))
         and t not in {"new", "used", "refurbished"}
+        and not (family == 'iphone' and t in {'activated', 'актив', 'активированный', 'активированная', 'активирован'})
         and not (t in BRAND_OWNERS and t == BRAND_OWNERS[t])
         and t != "galaxy"
     }
@@ -282,14 +283,15 @@ def parse_spec(text: str) -> Spec:
     size_match = re.search(r"\b(?:размер|size)\s*([xsml]{1,3}|\d{1,2})\b", n)
     if not size_match and "rayban" in tokens:
         size_match = re.search(r"\b([sml]|xl|xxl)\s*$", n)
-    condition = next((x for x in ("refurbished", "used", "new") if x in tokens), None)
+    activation = family == 'iphone' and bool(tokens.intersection({'activated', 'актив', 'активированный', 'активированная', 'активирован'}))
+    condition = 'activated' if activation else next((x for x in ("refurbished", "used", "new") if x in tokens), None)
     budget = re.search(r"\b(?:до|бюджет)\s*[:=]?\s*(\d[\d ]{2,9})(?:₽|руб|rub|$)", normalize(text))
     max_price = Decimal(budget[1].replace(" ", "")) if budget else None
     if re.search(r'\b(?:мят\w*|дефект\w*|витрин\w*|уцен\w*|поврежд\w*|damaged|open box|demo|renewed)\b', n):
         condition = 'damaged'
     if re.search(r"\s[-–—]\s*\d+\s*$", normalize(text)):
         issues.append("неясное число после дефиса; количество нужно указывать с «шт»")
-    if len(tokens.intersection({"new", "used", "refurbished"})) > 1:
+    if len(tokens.intersection({"new", "used", "refurbished"})) + int(activation) > 1:
         issues.append("противоречивые требования к состоянию")
     if len(storage) > 1 and not re.search(r'\b\d+(?:gb|tb)?\s+(?:или|or)\s+\d+(?:gb|tb)?\b', n):
         issues.append('несколько значений памяти без «или»')
@@ -543,7 +545,7 @@ def attribute_reason(request: Spec, item: Spec) -> str | None:
         (not colors_match(request, item), 'цвет'),
         (request.sim and request.sim != item.sim and not (request.sim == 'sim' and item.sim == 'sim_esim'), 'SIM'),
         (request.condition and request.condition != item.condition, 'состояние'),
-        (not request.condition and item.condition in {'used', 'refurbished', 'damaged'}, 'б/у, восстановленный или повреждённый товар'),
+        (not request.condition and item.condition in {'used', 'refurbished', 'damaged', 'activated'}, 'б/у, активированный, восстановленный или повреждённый товар'),
         (request.size and request.size != item.size, 'размер'),
         (request.nfc is not None and request.nfc != item.nfc, 'NFC'),
         (request.connectivity and request.connectivity != item.connectivity, 'Wi-Fi / сотовая связь'),
@@ -594,7 +596,7 @@ class MatchReport:
 
 def describe_spec(spec: Spec) -> str:
     family = {'iphone': 'iPhone', 'ipad': 'iPad', 'pixel': 'Pixel', 'samsung': 'Samsung'}.get(spec.family, '')
-    versions = [v for v in ('pro', 'max', 'plus', 'ultra', 'mini', 'lite', 'air', 'edge', 'se', 'xl', 'fold', 'fe')
+    versions = [v for v in ('pro', 'max', 'plus', 'ultra', 'mini', 'duo', 'lite', 'air', 'edge', 'se', 'xl', 'fold', 'fe')
                 if v in spec.variants]
     model = ' '.join(filter(None, [family, *sorted(spec.model), *versions]))
     parts = ['модель: ' + (model or 'не распознана')]
@@ -784,6 +786,9 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
         request = parse_spec(clean)
         rayban_range = not requested_skus and rayban_broad_request(request)
         brand_reference = broad_brand_reference(clean) if not requested_skus and not rayban_range else None
+        iphone_duo_range = (not requested_skus and request.family == 'iphone' and not request.model
+                            and request.category == 'device' and request.variants == frozenset({'duo'})
+                            and 'iphone' in words(clean))
         sony_xm = (not requested_skus and request.brand == 'sony' and request.family == 'generic'
                    and len(request.model) == 1 and bool(re.fullmatch(r'xm\d+', next(iter(request.model)))))
         if requested_skus:
@@ -799,7 +804,7 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
             and request.category == parse_spec(p.name).category
             and request.variants == parse_spec(p.name).variants
             for p in products)
-        if not requested_skus and not rayban_range and not brand_reference and (not request.model or (request.family == 'generic' and not named_model and not any(
+        if not requested_skus and not rayban_range and not brand_reference and not iphone_duo_range and (not request.model or (request.family == 'generic' and not named_model and not any(
                 re.search(r'\d', t) or re.fullmatch(r'[ivx]+', t) for t in request.model))):
             issues.append('не указана конкретная модель или артикул')
         if request.family == 'iphone' and 'iphone' not in words(clean) and not requested_skus:
@@ -838,6 +843,9 @@ def inspect_request(text: str, products: list[Product], allow_bare: bool = True,
                         reason = 'версия модели'
             elif rayban_range:
                 reason = rayban_broad_reason(request, item, clean, product.name)
+            elif iphone_duo_range:
+                if item.family != 'iphone' or item.variants != request.variants or not request.traits.issubset(item.traits):
+                    reason = 'линейка iPhone Duo'
             elif brand_reference:
                 reason = broad_brand_reason(brand_reference, request, item, product.name)
             elif sony_xm:
