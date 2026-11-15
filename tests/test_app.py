@@ -185,6 +185,10 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('111 116 ₽', self.texts()[-1])
         self.assertNotIn('iPhone Duo 256Gb Night Sky', self.texts()[-1])
 
+    async def test_status_identifies_duo_catalog_fix(self):
+        await self.feed('/status')
+        self.assertIn('Версия: 2026-11-15-duo-catalog', self.texts()[-1])
+
     async def test_failed_upload_does_not_keep_poisoned_draft(self):
         await self.feed('/uploadprice')
         await self.feed('iPhone 18 без цены')

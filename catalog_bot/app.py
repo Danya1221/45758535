@@ -46,7 +46,7 @@ from .account_roles import prepare_account_roles
 from .chat_cleanup import OwnerChatCleanup, OwnerIncomingMiddleware, OwnerOutgoingMiddleware
 
 log = logging.getLogger(__name__)
-RELEASE = '2026-10-27-separate-accounts'
+RELEASE = '2026-11-15-duo-catalog'
 
 
 @dataclass(frozen=True)
