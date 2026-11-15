@@ -505,7 +505,10 @@ def parse_catalog(text: str) -> list[Product]:
             product = Product(name, parse_price(cells.get("price", "")), int(raw_stock) if raw_stock else None, sku,
                               country=inline_region)
             spec = parse_spec(name)
-            if not spec.model and not sku:
+            named_iphone_duo = (spec.family == 'iphone' and spec.brand == 'apple' and spec.category == 'device'
+                                and spec.variants == frozenset({'duo'}) and not spec.issues
+                                and 'iphone' in words(name))
+            if not spec.model and not sku and not named_iphone_duo:
                 raise CatalogError("нужна конкретная модель или артикул")
             seen_names.add(key)
             if sku:

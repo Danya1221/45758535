@@ -169,6 +169,22 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(self.store._base_products()[0].price), '105500')
         self.assertEqual(self.store._base_products()[0].country, '🇺🇸')
 
+    async def test_own_catalog_accepts_full_screenshot_with_unnumbered_duo(self):
+        await self.feed('/catalog')
+        # Synthetic prices exercise the screenshot's format without publishing the owner's price list.
+        await self.feed('iPhone 17 Pro eSIM+SIM 512Gb (Cosmic Orange) 🇭🇰 111 111\n'
+                        'iPhone 17 Pro Max eSIM+SIM 1Tb (Cosmic Orange) 🇦🇺 111 112\n'
+                        'iPhone 17 Pro Max eSIM+SIM 1Tb (Deep Blue) 🇦🇺 111 113\n'
+                        'iPhone 18 pro 512 Burgundy eSIM 🇺🇸 111 114\n'
+                        'iPhone Duo 256Gb Night Sky 111 115\n'
+                        'iPhone Duo 256Gb White 111 116')
+        self.assertEqual(len(self.store._base_products()), 6)
+        self.assertIn('Свои товары в ответах', self.texts()[-1])
+        await self.feed('/test айфон дуо 256 белый')
+        self.assertIn('iPhone Duo 256Gb White', self.texts()[-1])
+        self.assertIn('111 116 ₽', self.texts()[-1])
+        self.assertNotIn('iPhone Duo 256Gb Night Sky', self.texts()[-1])
+
     async def test_failed_upload_does_not_keep_poisoned_draft(self):
         await self.feed('/uploadprice')
         await self.feed('iPhone 18 без цены')

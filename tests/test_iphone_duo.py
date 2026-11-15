@@ -3,7 +3,7 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
-from catalog_bot.catalog import Product, find_products, inspect_request, parse_catalog, parse_spec
+from catalog_bot.catalog import CatalogError, Product, find_products, inspect_request, parse_catalog, parse_spec
 from catalog_bot.offer_selection import select_offers
 from catalog_bot.prices import parse_price_feed
 from catalog_bot.storage import Store
@@ -77,6 +77,25 @@ class IphoneDuoTests(unittest.TestCase):
         self.assertIn('duo', ' '.join(report.details))
         self.assertEqual(parse_spec(feed.products[0].name).variants, frozenset({'duo'}))
         self.assertEqual(select_offers(report.products)[0].price, Decimal('194300'))
+
+    def test_catalog_accepts_explicit_iphone_duo_without_inventing_generation(self):
+        products = parse_catalog('iPhone Duo 256Gb Night Sky 111 111\niPhone Duo 256Gb White 111 112')
+        self.assertEqual([p.price for p in products], [Decimal('111111'), Decimal('111112')])
+        self.assertTrue(all(not parse_spec(p.name).model for p in products))
+        _, white = find_products('айфон дуо 256 белый', products)
+        _, night = find_products('iPhone Duo 256 Night Sky', products)
+        self.assertEqual([p.name for p in white], ['iPhone Duo 256Gb White'])
+        self.assertEqual([p.name for p in night], ['iPhone Duo 256Gb Night Sky'])
+        self.assertEqual(find_products('iPhone 18 Duo 256 White eSIM', products)[1], [])
+        self.assertEqual(find_products('iPhone Duo 256 White eSIM', products)[1], [])
+
+    def test_catalog_does_not_accept_ambiguous_duo_or_conflicting_brands(self):
+        for text in ('Duo 256 White|111111', 'Xiaomi iPhone Duo 256 White|111111',
+                     'iPhone Duo Pro 256 White|111111'):
+            with self.subTest(text=text), self.assertRaises(CatalogError):
+                parse_catalog(text)
+        accessory = parse_catalog('чехол для iPhone Duo|1000')
+        self.assertEqual(find_products('айфон дуо', accessory)[1], [])
 
 
 class DuoEngineTests(unittest.IsolatedAsyncioTestCase):
